@@ -1,16 +1,13 @@
 mod ata;
 mod scsi;
 mod sg_io;
-use ata::{Ata, ReadLogExt};
+use ata::Ata;
 fn main() {
-    let cmd = ReadLogExt {
-        log_page_count: 0x10,
-        log_address: 0x01,
-        page_number: 0x0001,
-    };
+    let cmd = ata::ReadDmaExt::new(.. count: 1, lba: 0x1000 ..);
     println!(
-        "Hello, world! command: {:#X}, count: {:#X}",
+        "Hello, world! command: {:#X}, count: {:#X}, fis: {:02X?}",
         cmd.command(),
-        cmd.count()
+        cmd.count(),
+        cmd.fis()
     );
 }
