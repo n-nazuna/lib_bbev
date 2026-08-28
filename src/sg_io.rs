@@ -13,3 +13,9 @@ pub struct XferParam {
     pub direction: XferDirection,
     pub length: XferLength,
 }
+
+struct device {
+    hctl: [u8; 4],
+    sector_size_bytes: u32,
+    max_sectors_kbytes: u32,
+}
