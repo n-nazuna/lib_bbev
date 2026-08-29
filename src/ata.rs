@@ -1,6 +1,6 @@
 use crate::sg_io::{XferDirection, XferLength};
 #[repr(u8)]
-enum AtaProtocol {
+pub(crate) enum AtaProtocol {
     NonData = 0x03,
     PioDataIn = 0x04,
     PioDataOut = 0x05,
@@ -10,7 +10,7 @@ enum AtaProtocol {
 pub struct XferParam {
     pub direction: XferDirection,
     pub length: XferLength,
-    pub protocol: AtaProtocol,
+    pub(crate) protocol: AtaProtocol,
 }
 
 pub trait Ata {

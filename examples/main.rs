@@ -1,9 +1,5 @@
-mod ata;
-mod scsi;
-mod sg_io;
-use scsi::Cdb;
-
-use crate::scsi::Scsi;
+use lib_bbev::{ata, scsi};
+use lib_bbev::scsi::{Cdb, Scsi};
 fn main() {
     let cmd = ata::ReadLogDmaExt::new(0x01, 0x30, 0x0000);
     let cdb = scsi::AtaPt16::new(cmd);
@@ -13,5 +9,8 @@ fn main() {
             _ => [0u8; 16],
         };
         print!("{:02X}", cdb_bytes[i]);
+        if i < 15 {
+            print!(" ");
+        }
     }
 }
