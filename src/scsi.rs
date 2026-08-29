@@ -24,7 +24,6 @@ impl<T: Ata> AtaPt16<T> {
         AtaPt16 { ata_cmd }
     }
     fn byte2(&self) -> u8 {
-        let mut byte2 = 0u8;
         let offline = 0u8;
         let ck_cond = 0u8;
         let t_dir = match self.ata_cmd.xfer_length().direction {
@@ -44,15 +43,19 @@ impl<T: Ata> AtaPt16<T> {
             (_, 0x60 | 0x61 | 0x63 | 0x65) => 0b01,
             (_, _) => 0b10,
         };
-        byte2 = (offline << 7) | (ck_cond << 6) | (t_type << 5) | (t_dir << 4) | (byte_block << 2) | t_length;
-        byte2
+        (offline << 7)
+            | (ck_cond << 6)
+            | (t_type << 5)
+            | (t_dir << 4)
+            | (byte_block << 2)
+            | t_length
     }
 }
 impl<T: Ata> Scsi for AtaPt16<T> {
     fn cdb(&self) -> Cdb {
         let mut cdb = [0u8; 16];
         cdb[0] = 0x85; // ATA PASS-THROUGH (16)
-        cdb[1] = (self.ata_cmd.protocol() as u8) << 1 | 1;
+        cdb[1] = (self.ata_cmd.protocol()) << 1 | 1;
         cdb[2] = self.byte2();
         cdb[3] = (self.ata_cmd.feature() >> 8) as u8;
         cdb[4] = self.ata_cmd.feature() as u8;

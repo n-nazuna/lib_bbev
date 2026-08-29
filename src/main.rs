@@ -13,8 +13,5 @@ fn main() {
         ata::fis(&cmd)
     );
     let cdb = scsi::AtaPt16::new(cmd);
-    println!(
-        "Hello, world! cdb: {:02X?}",
-        cdb.cdb(),
-    );
+    println!("Hello, world! cdb: {:02X?}", cdb.cdb(),);
 }
