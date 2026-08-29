@@ -25,30 +25,30 @@ pub trait Ata {
         0
     }
     fn xfer_length(&self) -> XferParam;
-    fn fis(&self) -> [u8; 20] {
-        let mut fis = [0u8; 20];
-        fis[0] = 0x27; // FIS Type: Register - Host to Device
-        fis[1] = 0x80; // C bit set
-        fis[2] = self.command();
-        fis[3] = self.feature() as u8;
-        fis[4] = self.lba() as u8;
-        fis[5] = (self.lba() >> 8) as u8;
-        fis[6] = (self.lba() >> 16) as u8;
-        fis[7] = self.device();
-        fis[8] = (self.lba() >> 24) as u8;
-        fis[9] = (self.lba() >> 32) as u8;
-        fis[10] = (self.lba() >> 40) as u8;
-        fis[11] = (self.feature() >> 8) as u8;
-        fis[12] = self.count() as u8;
-        fis[13] = (self.count() >> 8) as u8;
-        fis[14] = self.icc();
-        fis[15] = self.control();
-        fis[16] = self.aux() as u8;
-        fis[17] = (self.aux() >> 8) as u8;
-        fis[18] = (self.aux() >> 16) as u8;
-        fis[19] = (self.aux() >> 24) as u8;
-        fis
-    }
+}
+pub fn fis(ata: &impl Ata) -> [u8; 20] {
+    let mut fis = [0u8; 20];
+    fis[0] = 0x27; // FIS Type: Register - Host to Device
+    fis[1] = 0x80; // C bit set
+    fis[2] = ata.command();
+    fis[3] = ata.feature() as u8;
+    fis[4] = ata.lba() as u8;
+    fis[5] = (ata.lba() >> 8) as u8;
+    fis[6] = (ata.lba() >> 16) as u8;
+    fis[7] = ata.device();
+    fis[8] = (ata.lba() >> 24) as u8;
+    fis[9] = (ata.lba() >> 32) as u8;
+    fis[10] = (ata.lba() >> 40) as u8;
+    fis[11] = (ata.feature() >> 8) as u8;
+    fis[12] = ata.count() as u8;
+    fis[13] = (ata.count() >> 8) as u8;
+    fis[14] = ata.icc();
+    fis[15] = ata.control();
+    fis[16] = ata.aux() as u8;
+    fis[17] = (ata.aux() >> 8) as u8;
+    fis[18] = (ata.aux() >> 16) as u8;
+    fis[19] = (ata.aux() >> 24) as u8;
+    fis
 }
 macro_rules! define_gpl {
     ($name:ident, $cmd:expr, $dir:expr) => {
