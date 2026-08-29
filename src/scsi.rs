@@ -39,8 +39,8 @@ impl<T: Ata> AtaPt16<T> {
         };
         let t_length = match (self.ata_cmd.xfer_length().length, self.ata_cmd.command()) {
             (XferLength::None, _) => 0b00,
-            (XferLength::Pages(_), 0x66) => 0b11,
-            (_, 0x60 | 0x61 | 0x63 | 0x65) => 0b01,
+            (XferLength::Pages(_), 0x66) => 0b11,   // WRITE GATHERED EXT
+            (_, 0x60 | 0x61 | 0x63 | 0x65) => 0b01, // FPDMA
             (_, _) => 0b10,
         };
         (offline << 7)
