@@ -1,6 +1,6 @@
+use lib_bbev::scsi::Scsi;
 use lib_bbev::sg_io::Device;
 use lib_bbev::{ata, scsi};
-use lib_bbev::scsi::Scsi;
 use std::env;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
@@ -21,7 +21,10 @@ fn main() {
     let fd = file.as_raw_fd();
     let dev = Device::new(fd, 512, 1024);
 
-    let cmd = ata::ReadLogDmaExt::new(0x01, 0x30, 0x0000);
+    let cmd = ata::Gpl::read_log_dma_ext()
+        .address(0x00)
+        .page_number(0x00)
+        .page_count(1);
     let cdb = scsi::AtaPt16::new(cmd);
     let mut buf = vec![0u8; 512];
 

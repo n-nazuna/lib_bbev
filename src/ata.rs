@@ -1,5 +1,6 @@
 use crate::sg_io::{XferDirection, XferLength};
 #[repr(u8)]
+#[derive(Copy, Clone)]
 pub(crate) enum AtaProtocol {
     NonData = 0x03,
     PioDataIn = 0x04,
@@ -7,6 +8,7 @@ pub(crate) enum AtaProtocol {
     Dma = 0x06,
     Ncq = 0x0C,
 }
+#[derive(Copy, Clone)]
 pub struct XferParam {
     pub direction: XferDirection,
     pub length: XferLength,
@@ -14,9 +16,7 @@ pub struct XferParam {
 }
 
 pub trait Ata {
-    fn command(&self) -> u8 {
-        0
-    }
+    fn command(&self) -> u8;
     fn feature(&self) -> u16 {
         0
     }
@@ -67,244 +67,150 @@ pub fn fis(ata: &impl Ata) -> [u8; 20] {
     fis[19] = (ata.aux() >> 24) as u8;
     fis
 }
+trait GplTrait {
+    fn feature(&self) -> u16;
+    fn page_count(&self) -> u16;
+    fn page_number(&self) -> u16;
+    fn address(&self) -> u8;
+}
+pub struct Gpl {
+    feature: u16,
+    log_page_count: u16,
+    page_number: u16,
+    log_address: u8,
+    command: u8,
+    xfer_param: XferParam,
+}
+impl GplTrait for Gpl {
+    fn feature(&self) -> u16 {
+        self.feature
+    }
+    fn page_count(&self) -> u16 {
+        self.log_page_count
+    }
+    fn page_number(&self) -> u16 {
+        self.page_number
+    }
+    fn address(&self) -> u8 {
+        self.log_address
+    }
+}
+impl Gpl {
+    fn page_number_hi(&self) -> u8 {
+        (self.page_number >> 8) as u8
+    }
+    fn page_number_lo(&self) -> u8 {
+        (self.page_number & 0xFF) as u8
+    }
+}
+impl Ata for Gpl {
+    fn command(&self) -> u8 {
+        self.command
+    }
+    fn count(&self) -> u16 {
+        self.page_count()
+    }
+    fn lba(&self) -> u64 {
+        ((self.page_number_hi() as u64) << 32)
+            | ((self.page_number_lo() as u64) << 8)
+            | (self.address() as u64)
+    }
+    fn feature(&self) -> u16 {
+        self.feature
+    }
+    fn xfer_length(&self) -> XferParam {
+        XferParam {
+            direction: self.xfer_param.direction,
+            length: XferLength::Pages(self.page_count() as u32),
+            protocol: self.xfer_param.protocol,
+        }
+    }
+}
+impl Gpl {
+    pub fn page_count(mut self, count: u16) -> Self {
+        self.log_page_count = count;
+        self
+    }
+    pub fn page_number(mut self, number: u16) -> Self {
+        self.page_number = number;
+        self
+    }
+    pub fn address(mut self, address: u8) -> Self {
+        self.log_address = address;
+        self
+    }
+}
 macro_rules! define_gpl {
     ($name:ident, $cmd:expr, $dir:expr, $protocol:expr) => {
-        pub struct $name {
-            log_page_count: u16,
-            log_address: u8,
-            page_number: u16,
-        }
-        impl $name {
-            pub fn new(log_page_count: u16, log_address: u8, page_number: u16) -> Self {
-                Self {
-                    log_page_count,
-                    log_address,
-                    page_number,
-                }
-            }
-            pub fn log_page_count(&self) -> u16 {
-                self.log_page_count
-            }
-            pub fn log_address(&self) -> u8 {
-                self.log_address
-            }
-            pub fn page_number(&self) -> u16 {
-                self.page_number
-            }
-            fn page_number_hi(&self) -> u8 {
-                (self.page_number >> 8) as u8
-            }
-            fn page_number_lo(&self) -> u8 {
-                (self.page_number & 0xFF) as u8
-            }
-        }
-        impl Ata for $name {
-            fn command(&self) -> u8 {
-                $cmd
-            }
-            fn count(&self) -> u16 {
-                self.log_page_count
-            }
-            fn lba(&self) -> u64 {
-                ((self.page_number_hi() as u64) << 32)
-                    | ((self.page_number_lo() as u64) << 8)
-                    | (self.log_address as u64)
-            }
-            fn xfer_length(&self) -> XferParam {
-                XferParam {
-                    direction: $dir,
-                    length: XferLength::Pages(self.log_page_count as u32),
-                    protocol: $protocol,
+        impl Gpl {
+            pub fn $name() -> Self {
+                Gpl {
+                    feature: 0,
+                    log_page_count: 0,
+                    page_number: 0,
+                    log_address: 0,
+                    command: $cmd,
+                    xfer_param: XferParam {
+                        direction: $dir,
+                        length: XferLength::Pages(0),
+                        protocol: $protocol,
+                    },
                 }
             }
         }
     };
 }
+
 define_gpl!(
-    ReadLogExt,
+    read_log_ext,
     0x2F,
     XferDirection::TargetToInitiator,
     AtaProtocol::PioDataIn
 );
 define_gpl!(
-    WriteLogExt,
-    0x3F,
-    XferDirection::InitiatorToTarget,
-    AtaProtocol::PioDataOut
-);
-define_gpl!(
-    ReadLogDmaExt,
+    read_log_dma_ext,
     0x47,
     XferDirection::TargetToInitiator,
     AtaProtocol::Dma
 );
 define_gpl!(
-    WriteLogDmaExt,
+    write_log_ext,
+    0x3F,
+    XferDirection::InitiatorToTarget,
+    AtaProtocol::PioDataOut
+);
+define_gpl!(
+    write_log_dma_ext,
     0x57,
     XferDirection::InitiatorToTarget,
     AtaProtocol::Dma
 );
 
-macro_rules! define_rw {
-    ($name:ident, $cmd:expr, $dir:expr, $protocol:expr) => {
-        pub struct $name {
-            count: u16,
-            lba: u64,
-        }
-        impl $name {
-            pub fn new(count: u16, lba: u64) -> Self {
-                Self {
-                    count: count & 0xFF,
-                    lba: lba & ((1 << 28) - 1),
-                }
-            }
-        }
-        impl Ata for $name {
-            fn command(&self) -> u8 {
-                $cmd
-            }
-            fn count(&self) -> u16 {
-                self.count
-            }
-            fn lba(&self) -> u64 {
-                self.lba
-            }
-            fn xfer_length(&self) -> XferParam {
-                XferParam {
-                    direction: $dir,
-                    length: XferLength::Sectors(self.count as u32),
-                    protocol: $protocol,
-                }
-            }
-        }
-    };
+trait NcqTrait {
+    fn feature(&self) -> u16;
+    fn count(&self) -> u16;
+    fn lba(&self) -> u64;
+    fn aux(&self) -> u32;
 }
-define_rw!(
-    ReadSectors,
-    0x20,
-    XferDirection::TargetToInitiator,
-    AtaProtocol::PioDataIn
-);
-define_rw!(
-    WriteSectors,
-    0x30,
-    XferDirection::InitiatorToTarget,
-    AtaProtocol::PioDataOut
-);
-define_rw!(
-    ReadDma,
-    0xC8,
-    XferDirection::TargetToInitiator,
-    AtaProtocol::Dma
-);
-define_rw!(
-    WriteDma,
-    0xCA,
-    XferDirection::InitiatorToTarget,
-    AtaProtocol::Dma
-);
-macro_rules! define_rw_ext {
-    ($name:ident, $cmd:expr, $dir:expr, $protocol:expr) => {
-        pub struct $name {
-            count: u16,
-            lba: u64,
-        }
-        impl $name {
-            pub fn new(count: u16, lba: u64) -> Self {
-                Self {
-                    count: count & 0xFFFF,
-                    lba: lba & ((1 << 48) - 1),
-                }
-            }
-        }
-        impl Ata for $name {
-            fn command(&self) -> u8 {
-                $cmd
-            }
-            fn count(&self) -> u16 {
-                self.count
-            }
-            fn lba(&self) -> u64 {
-                self.lba
-            }
-            fn device(&self) -> u8 {
-                1 << 6
-            }
-            fn xfer_length(&self) -> XferParam {
-                XferParam {
-                    direction: $dir,
-                    length: XferLength::Sectors(self.count as u32),
-                    protocol: $protocol,
-                }
-            }
-        }
-    };
+struct Ncq {
+    feature: u16,
+    count: u16,
+    lba: u64,
+    aux: u32,
+    command: u8,
+    xfer_param: XferParam,
 }
-define_rw_ext!(
-    ReadSectorsExt,
-    0x24,
-    XferDirection::TargetToInitiator,
-    AtaProtocol::PioDataIn
-);
-define_rw_ext!(
-    WriteSectorsExt,
-    0x34,
-    XferDirection::InitiatorToTarget,
-    AtaProtocol::PioDataOut
-);
-macro_rules! define_rw_dma_ext {
-    ($name:ident, $cmd:expr, $dir:expr, $protocol:expr) => {
-        pub struct $name {
-            feature: u16,
-            count: u16,
-            lba: u64,
-            aux: u32,
-        }
-        impl $name {
-            pub fn new(cdl: u8, count: u16, lba: u64, hybrid: u8) -> Self {
-                Self {
-                    feature: cdl as u16,
-                    count: count & 0xFFFF,
-                    lba: lba & ((1 << 48) - 1),
-                    aux: (hybrid as u32) << 16,
-                }
-            }
-        }
-        impl Ata for $name {
-            fn command(&self) -> u8 {
-                $cmd
-            }
-            fn count(&self) -> u16 {
-                self.count
-            }
-            fn lba(&self) -> u64 {
-                self.lba
-            }
-            fn aux(&self) -> u32 {
-                self.aux
-            }
-            fn device(&self) -> u8 {
-                1 << 6
-            }
-            fn xfer_length(&self) -> XferParam {
-                XferParam {
-                    direction: $dir,
-                    length: XferLength::Sectors(self.count as u32),
-                    protocol: $protocol,
-                }
-            }
-        }
-    };
+impl NcqTrait for Ncq {
+    fn feature(&self) -> u16 {
+        self.feature
+    }
+    fn count(&self) -> u16 {
+        self.count
+    }
+    fn lba(&self) -> u64 {
+        self.lba
+    }
+    fn aux(&self) -> u32 {
+        self.aux
+    }
 }
-define_rw_dma_ext!(
-    ReadDmaExt,
-    0x25,
-    XferDirection::TargetToInitiator,
-    AtaProtocol::Dma
-);
-define_rw_dma_ext!(
-    WriteDmaExt,
-    0x35,
-    XferDirection::InitiatorToTarget,
-    AtaProtocol::Dma
-);

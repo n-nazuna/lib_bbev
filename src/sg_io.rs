@@ -1,12 +1,14 @@
 use crate::scsi::{Cdb, Scsi};
 use std::io;
 
+#[derive(Copy, Clone)]
 pub enum XferDirection {
     TargetToInitiator,
     InitiatorToTarget,
     NoDataTransfer,
 }
 
+#[derive(Copy, Clone)]
 pub enum XferLength {
     Sectors(u32),
     Pages(u32),
@@ -28,7 +30,11 @@ pub struct SgIoError {
 #[derive(Debug)]
 pub enum SgIoErrorKind {
     IoctlFailed(io::Error),
-    ScsiError { status: u8, host_status: u16, driver_status: u16 },
+    ScsiError {
+        status: u8,
+        host_status: u16,
+        driver_status: u16,
+    },
 }
 
 #[repr(C)]
@@ -75,7 +81,11 @@ impl Cdb {
 
 impl Device {
     pub fn new(fd: i32, sector_size_bytes: u32, max_sectors_kbytes: u32) -> Self {
-        Self { fd, sector_size_bytes, max_sectors_kbytes }
+        Self {
+            fd,
+            sector_size_bytes,
+            max_sectors_kbytes,
+        }
     }
 
     pub fn execute(&self, cmd: &impl Scsi, buf: &mut [u8]) -> Result<(), SgIoError> {
