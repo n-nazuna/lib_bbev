@@ -1,4 +1,17 @@
-use crate::sg_io::{XferDirection, XferLength, XferParam};
+use crate::sg_io::{XferDirection, XferLength};
+enum AtaProtocol {
+    NonData = 0x03,
+    PioDataIn = 0x04,
+    PioDataOut = 0x05,
+    Dma = 0x06,
+    Ncq = 0x0C,
+}
+pub struct XferParam {
+    pub direction: XferDirection,
+    pub length: XferLength,
+    pub protocol: AtaProtocol,
+}
+
 pub trait Ata {
     fn command(&self) -> u8 {
         0
@@ -25,6 +38,9 @@ pub trait Ata {
         0
     }
     fn xfer_length(&self) -> XferParam;
+    fn protocol(&self) -> u8 {
+        self.xfer_length().protocol as u8
+    }
 }
 pub fn fis(ata: &impl Ata) -> [u8; 20] {
     let mut fis = [0u8; 20];
@@ -51,7 +67,7 @@ pub fn fis(ata: &impl Ata) -> [u8; 20] {
     fis
 }
 macro_rules! define_gpl {
-    ($name:ident, $cmd:expr, $dir:expr) => {
+    ($name:ident, $cmd:expr, $dir:expr, $protocol:expr) => {
         pub struct $name {
             log_page_count: u16,
             log_address: u8,
@@ -97,18 +113,19 @@ macro_rules! define_gpl {
                 XferParam {
                     direction: $dir,
                     length: XferLength::Pages(self.log_page_count as u32),
+                    protocol: $protocol,
                 }
             }
         }
     };
 }
-define_gpl!(ReadLogExt, 0x2F, XferDirection::TargetToInitiator);
-define_gpl!(ReadLogDmaExt, 0x47, XferDirection::TargetToInitiator);
-define_gpl!(WriteLogExt, 0x3F, XferDirection::InitiatorToTarget);
-define_gpl!(WriteLogDmaExt, 0x57, XferDirection::InitiatorToTarget);
+define_gpl!(ReadLogExt, 0x2F, XferDirection::TargetToInitiator, AtaProtocol::PioDataIn);
+define_gpl!(ReadLogDmaExt, 0x47, XferDirection::TargetToInitiator, AtaProtocol::Dma);
+define_gpl!(WriteLogExt, 0x3F, XferDirection::InitiatorToTarget, AtaProtocol::PioDataOut);
+define_gpl!(WriteLogDmaExt, 0x57, XferDirection::InitiatorToTarget, AtaProtocol::Dma);
 
 macro_rules! define_rw {
-    ($name:ident, $cmd:expr, $dir:expr) => {
+    ($name:ident, $cmd:expr, $dir:expr, $protocol:expr) => {
         pub struct $name {
             count: u16,
             lba: u64,
@@ -135,17 +152,18 @@ macro_rules! define_rw {
                 XferParam {
                     direction: $dir,
                     length: XferLength::Sectors(self.count as u32),
+                    protocol: $protocol,
                 }
             }
         }
     };
 }
-define_rw!(ReadSectors, 0x20, XferDirection::TargetToInitiator);
-define_rw!(WriteSectors, 0x30, XferDirection::InitiatorToTarget);
-define_rw!(ReadDma, 0xC8, XferDirection::TargetToInitiator);
-define_rw!(WriteDma, 0xCA, XferDirection::InitiatorToTarget);
+define_rw!(ReadSectors, 0x20, XferDirection::TargetToInitiator, AtaProtocol::PioDataIn);
+define_rw!(WriteSectors, 0x30, XferDirection::InitiatorToTarget, AtaProtocol::PioDataOut);
+define_rw!(ReadDma, 0xC8, XferDirection::TargetToInitiator, AtaProtocol::Dma);
+define_rw!(WriteDma, 0xCA, XferDirection::InitiatorToTarget, AtaProtocol::Dma);
 macro_rules! define_rw_ext {
-    ($name:ident, $cmd:expr, $dir:expr) => {
+    ($name:ident, $cmd:expr, $dir:expr, $protocol:expr) => {
         pub struct $name {
             count: u16,
             lba: u64,
@@ -175,15 +193,16 @@ macro_rules! define_rw_ext {
                 XferParam {
                     direction: $dir,
                     length: XferLength::Sectors(self.count as u32),
+                    protocol: $protocol,
                 }
             }
         }
     };
 }
-define_rw_ext!(ReadSectorsExt, 0x24, XferDirection::TargetToInitiator);
-define_rw_ext!(WriteSectorsExt, 0x34, XferDirection::InitiatorToTarget);
+define_rw_ext!(ReadSectorsExt, 0x24, XferDirection::TargetToInitiator, AtaProtocol::PioDataIn);
+define_rw_ext!(WriteSectorsExt, 0x34, XferDirection::InitiatorToTarget, AtaProtocol::PioDataOut);
 macro_rules! define_rw_dma_ext {
-    ($name:ident, $cmd:expr, $dir:expr) => {
+    ($name:ident, $cmd:expr, $dir:expr, $protocol:expr) => {
         pub struct $name {
             feature: u16,
             count: u16,
@@ -220,10 +239,11 @@ macro_rules! define_rw_dma_ext {
                 XferParam {
                     direction: $dir,
                     length: XferLength::Sectors(self.count as u32),
+                    protocol: $protocol,
                 }
             }
         }
     };
 }
-define_rw_dma_ext!(ReadDmaExt, 0x25, XferDirection::TargetToInitiator);
-define_rw_dma_ext!(WriteDmaExt, 0x35, XferDirection::InitiatorToTarget);
+define_rw_dma_ext!(ReadDmaExt, 0x25, XferDirection::TargetToInitiator, AtaProtocol::Dma);
+define_rw_dma_ext!(WriteDmaExt, 0x35, XferDirection::InitiatorToTarget, AtaProtocol::Dma);

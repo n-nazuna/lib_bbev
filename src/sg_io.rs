@@ -9,11 +9,6 @@ pub enum XferLength {
     Bytes(usize),
     None,
 }
-pub struct XferParam {
-    pub direction: XferDirection,
-    pub length: XferLength,
-}
-
 struct device {
     hctl: [u8; 4],
     sector_size_bytes: u32,
