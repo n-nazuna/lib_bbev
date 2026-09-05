@@ -1,4 +1,3 @@
-use lib_bbev::scsi::Scsi;
 use lib_bbev::sg_io::Device;
 use lib_bbev::{ata, scsi};
 use std::env;
@@ -20,12 +19,13 @@ fn main() {
 
     let fd = file.as_raw_fd();
     let dev = Device::new(fd, 512, 1024);
-
     let cmd = ata::Gpl::read_log_dma_ext()
-        .address(0x00)
-        .page_number(0x00)
-        .page_count(1);
-    let cdb = scsi::AtaPt16::new(cmd);
+    .address(0)
+    .page_count(1)
+    .page_number(0)
+    .build();
+    let cdb = scsi::AtaPt16::new(cmd).build();
+
     let mut buf = vec![0u8; 512];
 
     match dev.execute(&cdb, &mut buf) {

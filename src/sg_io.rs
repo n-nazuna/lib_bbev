@@ -88,10 +88,9 @@ impl Device {
         }
     }
 
-    pub fn execute(&self, cmd: &impl Scsi, buf: &mut [u8]) -> Result<(), SgIoError> {
-        let cdb = cmd.cdb();
-        let cdb_slice = cdb.as_slice();
-        let xfer = cmd.xfer_length();
+    pub fn execute(&self, cmd: &Scsi, buf: &mut [u8]) -> Result<(), SgIoError> {
+        let cdb_slice = cmd.cdb.as_slice();
+        let xfer = cmd.xfer_param;
 
         let dxfer_direction = match xfer.direction {
             XferDirection::TargetToInitiator => SG_DXFER_FROM_DEV,

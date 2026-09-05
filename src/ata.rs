@@ -1,216 +1,172 @@
 use crate::sg_io::{XferDirection, XferLength};
-#[repr(u8)]
-#[derive(Copy, Clone)]
-pub(crate) enum AtaProtocol {
-    NonData = 0x03,
-    PioDataIn = 0x04,
-    PioDataOut = 0x05,
-    Dma = 0x06,
-    Ncq = 0x0C,
+
+pub enum AtaProtocol {
+    NonData,
+    Pio(XferLength),
+    Dma(XferLength),
+    NcqNonData,
+    Ncq(XferLength),
 }
-#[derive(Copy, Clone)]
+impl AtaProtocol {
+    pub fn length(&self) -> XferLength {
+        match self {
+            AtaProtocol::NonData | AtaProtocol::NcqNonData => XferLength::None,
+            AtaProtocol::Pio(len) | AtaProtocol::Dma(len) | AtaProtocol::Ncq(len) => *len,
+        }
+    }
+    // ATA PASS-THROUGH CDB PROTOCOL field values (SAT-3)
+    pub fn code(&self, direction: XferDirection) -> u8 {
+        match self {
+            AtaProtocol::NonData => 0x3,
+            AtaProtocol::Pio(_) => match direction {
+                XferDirection::TargetToInitiator => 0x4,
+                _ => 0x5,
+            },
+            AtaProtocol::Dma(_) => 0x6,
+            AtaProtocol::NcqNonData | AtaProtocol::Ncq(_) => 0xC,
+        }
+    }
+}
 pub struct XferParam {
     pub direction: XferDirection,
-    pub length: XferLength,
-    pub(crate) protocol: AtaProtocol,
+    pub protocol: AtaProtocol,
 }
-
-pub trait Ata {
-    fn command(&self) -> u8;
-    fn feature(&self) -> u16 {
-        0
-    }
-    fn count(&self) -> u16 {
-        0
-    }
-    fn lba(&self) -> u64 {
-        0
-    }
-    fn icc(&self) -> u8 {
-        0
-    }
-    fn aux(&self) -> u32 {
-        0
-    }
-    fn device(&self) -> u8 {
-        0
-    }
-    fn control(&self) -> u8 {
-        0
-    }
-    fn xfer_length(&self) -> XferParam;
-    fn protocol(&self) -> u8 {
-        self.xfer_length().protocol as u8
-    }
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum AtaCmd {
+    Nop = 0x00,
+    ReadLogExt = 0x2F,
+    ReadLogDmaExt = 0x47,
+    WriteLogExt = 0x3F,
+    WriteLogDmaExt = 0x57,
+    ReadDmaExt = 0x25,
+    WriteDmaExt = 0x35,
 }
-pub fn fis(ata: &impl Ata) -> [u8; 20] {
-    let mut fis = [0u8; 20];
-    fis[0] = 0x27; // FIS Type: Register - Host to Device
-    fis[1] = 0x80; // C bit set
-    fis[2] = ata.command();
-    fis[3] = ata.feature() as u8;
-    fis[4] = ata.lba() as u8;
-    fis[5] = (ata.lba() >> 8) as u8;
-    fis[6] = (ata.lba() >> 16) as u8;
-    fis[7] = ata.device();
-    fis[8] = (ata.lba() >> 24) as u8;
-    fis[9] = (ata.lba() >> 32) as u8;
-    fis[10] = (ata.lba() >> 40) as u8;
-    fis[11] = (ata.feature() >> 8) as u8;
-    fis[12] = ata.count() as u8;
-    fis[13] = (ata.count() >> 8) as u8;
-    fis[14] = ata.icc();
-    fis[15] = ata.control();
-    fis[16] = ata.aux() as u8;
-    fis[17] = (ata.aux() >> 8) as u8;
-    fis[18] = (ata.aux() >> 16) as u8;
-    fis[19] = (ata.aux() >> 24) as u8;
-    fis
+pub struct Ata {
+    pub(crate) feature: u16,
+    pub(crate) count: u16,
+    pub(crate) lba: u64,
+    pub(crate) control: u8,
+    pub(crate) icc: u8,
+    pub(crate) aux: u32,
+    pub(crate) device: u8,
+    pub(crate) command: AtaCmd,
+    pub(crate) xfer_param: XferParam,
 }
-trait GplTrait {
-    fn feature(&self) -> u16;
-    fn page_count(&self) -> u16;
-    fn page_number(&self) -> u16;
-    fn address(&self) -> u8;
+impl Ata {
+    pub fn new() -> Self {
+        Self {
+            feature: 0,
+            count: 0,
+            lba: 0,
+            control: 0,
+            icc: 0,
+            aux: 0,
+            device: 0,
+            command: AtaCmd::Nop,
+            xfer_param: XferParam {
+                direction: XferDirection::TargetToInitiator,
+                protocol: AtaProtocol::NonData,
+            },
+        }
+    }
+    pub fn fis(&self) -> [u8; 20] {
+        let mut fis = [0u8; 20];
+        fis[0] = 0x27; // FIS Type: Register - Host to Device
+        fis[1] = 0x80; // C bit set
+        fis[2] = self.command as u8;
+        fis[3] = self.feature as u8;
+        fis[4] = self.lba as u8;
+        fis[5] = (self.lba >> 8) as u8;
+        fis[6] = (self.lba >> 16) as u8;
+        fis[7] = self.device;
+        fis[8] = (self.lba >> 24) as u8;
+        fis[9] = (self.lba >> 32) as u8;
+        fis[10] = (self.lba >> 40) as u8;
+        fis[11] = (self.feature >> 8) as u8;
+        fis[12] = self.count as u8;
+        fis[13] = (self.count >> 8) as u8;
+        fis[14] = self.icc;
+        fis[15] = self.control;
+        fis[16] = self.aux as u8;
+        fis[17] = (self.aux >> 8) as u8;
+        fis[18] = (self.aux >> 16) as u8;
+        fis[19] = (self.aux >> 24) as u8;
+        fis
+    }
 }
 pub struct Gpl {
     feature: u16,
-    log_page_count: u16,
     page_number: u16,
-    log_address: u8,
-    command: u8,
+    page_count: u16,
+    address: u64,
+    command: AtaCmd,
     xfer_param: XferParam,
 }
-impl GplTrait for Gpl {
-    fn feature(&self) -> u16 {
-        self.feature
-    }
-    fn page_count(&self) -> u16 {
-        self.log_page_count
-    }
-    fn page_number(&self) -> u16 {
-        self.page_number
-    }
-    fn address(&self) -> u8 {
-        self.log_address
-    }
-}
 impl Gpl {
+    pub fn read_log_dma_ext() -> Self {
+        Gpl {
+            feature: 0,
+            page_number: 0,
+            page_count: 0,
+            address: 0,
+            command: AtaCmd::ReadLogDmaExt,
+            xfer_param: XferParam {
+                direction: XferDirection::TargetToInitiator,
+                protocol: AtaProtocol::Dma(XferLength::Pages(0)),
+            },
+        }
+    }
+    pub fn write_log_dma_ext() -> Self {
+        Gpl {
+            feature: 0,
+            page_number: 0,
+            page_count: 0,
+            address: 0,
+            command: AtaCmd::WriteLogDmaExt,
+            xfer_param: XferParam {
+                direction: XferDirection::InitiatorToTarget,
+                protocol: AtaProtocol::Dma(XferLength::Pages(0)),
+            },
+        }
+    }
+    pub fn page_number(mut self, page_number: u16) -> Self {
+        self.page_number = page_number;
+        self
+    }
     fn page_number_hi(&self) -> u8 {
         (self.page_number >> 8) as u8
     }
     fn page_number_lo(&self) -> u8 {
-        (self.page_number & 0xFF) as u8
-    }
-}
-impl Ata for Gpl {
-    fn command(&self) -> u8 {
-        self.command
-    }
-    fn count(&self) -> u16 {
-        self.page_count()
+        self.page_number as u8
     }
     fn lba(&self) -> u64 {
         ((self.page_number_hi() as u64) << 32)
             | ((self.page_number_lo() as u64) << 8)
-            | (self.address() as u64)
+            | (self.address as u64)
     }
-    fn feature(&self) -> u16 {
-        self.feature
+    pub fn page_count(mut self, page_count: u16) -> Self {
+        self.page_count = page_count;
+        self
     }
-    fn xfer_length(&self) -> XferParam {
-        XferParam {
-            direction: self.xfer_param.direction,
-            length: XferLength::Pages(self.page_count() as u32),
-            protocol: self.xfer_param.protocol,
+    pub fn address(mut self, address: u64) -> Self {
+        self.address = address;
+        self
+    }
+    pub fn build(self) -> Ata {
+        Ata {
+            feature: 0,
+            count: self.page_count,
+            lba: self.lba(),
+            control: 0,
+            icc: 0,
+            aux: 0,
+            device: 0,
+            command: self.command,
+            xfer_param: XferParam {
+                direction: self.xfer_param.direction,
+                protocol: AtaProtocol::Dma(XferLength::Pages(self.page_count as u32)),
+            },
         }
-    }
-}
-impl Gpl {
-    pub fn page_count(mut self, count: u16) -> Self {
-        self.log_page_count = count;
-        self
-    }
-    pub fn page_number(mut self, number: u16) -> Self {
-        self.page_number = number;
-        self
-    }
-    pub fn address(mut self, address: u8) -> Self {
-        self.log_address = address;
-        self
-    }
-}
-macro_rules! define_gpl {
-    ($name:ident, $cmd:expr, $dir:expr, $protocol:expr) => {
-        impl Gpl {
-            pub fn $name() -> Self {
-                Gpl {
-                    feature: 0,
-                    log_page_count: 0,
-                    page_number: 0,
-                    log_address: 0,
-                    command: $cmd,
-                    xfer_param: XferParam {
-                        direction: $dir,
-                        length: XferLength::Pages(0),
-                        protocol: $protocol,
-                    },
-                }
-            }
-        }
-    };
-}
-
-define_gpl!(
-    read_log_ext,
-    0x2F,
-    XferDirection::TargetToInitiator,
-    AtaProtocol::PioDataIn
-);
-define_gpl!(
-    read_log_dma_ext,
-    0x47,
-    XferDirection::TargetToInitiator,
-    AtaProtocol::Dma
-);
-define_gpl!(
-    write_log_ext,
-    0x3F,
-    XferDirection::InitiatorToTarget,
-    AtaProtocol::PioDataOut
-);
-define_gpl!(
-    write_log_dma_ext,
-    0x57,
-    XferDirection::InitiatorToTarget,
-    AtaProtocol::Dma
-);
-
-trait NcqTrait {
-    fn feature(&self) -> u16;
-    fn count(&self) -> u16;
-    fn lba(&self) -> u64;
-    fn aux(&self) -> u32;
-}
-struct Ncq {
-    feature: u16,
-    count: u16,
-    lba: u64,
-    aux: u32,
-    command: u8,
-    xfer_param: XferParam,
-}
-impl NcqTrait for Ncq {
-    fn feature(&self) -> u16 {
-        self.feature
-    }
-    fn count(&self) -> u16 {
-        self.count
-    }
-    fn lba(&self) -> u64 {
-        self.lba
-    }
-    fn aux(&self) -> u32 {
-        self.aux
     }
 }
