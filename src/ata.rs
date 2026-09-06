@@ -135,12 +135,16 @@ impl Ata {
         fis
     }
 }
+impl Default for Ata {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 pub struct Gpl {
     feature: u16,
     page_number: u16,
     page_count: u16,
-    address: u64,
-    command: AtaCmd,
+    address: u8,
 }
 impl Gpl {
     pub fn new() -> Self {
@@ -149,7 +153,6 @@ impl Gpl {
             page_number: 0,
             page_count: 1,
             address: 0,
-            command: AtaCmd::ReadLogDmaExt,
         }
     }
     pub fn feature(mut self, feature: u16) -> Self {
@@ -169,26 +172,26 @@ impl Gpl {
     fn lba(&self) -> u64 {
         ((self.page_number_hi() as u64) << 32)
             | ((self.page_number_lo() as u64) << 8)
-            | (self.address as u64)
+            | u64::from(self.address)
     }
     pub fn page_count(mut self, page_count: u16) -> Self {
         self.page_count = page_count;
         self
     }
-    pub fn address(mut self, address: u64) -> Self {
+    pub fn address(mut self, address: u8) -> Self {
         self.address = address;
         self
     }
     pub fn read_log_dma_ext(self) -> Ata {
         Ata {
-            feature: 0,
+            feature: self.feature,
             count: self.page_count,
             lba: self.lba(),
             control: 0,
             icc: 0,
             aux: 0,
             device: 0,
-            command: self.command,
+            command: AtaCmd::ReadLogDmaExt,
             xfer_param: XferParam {
                 direction: XferDirection::TargetToInitiator,
                 protocol: AtaProtocol::Dma(XferLength::Pages(self.page_count as u32)),
@@ -197,18 +200,43 @@ impl Gpl {
     }
     pub fn write_log_dma_ext(self) -> Ata {
         Ata {
-            feature: 0,
+            feature: self.feature,
             count: self.page_count,
             lba: self.lba(),
             control: 0,
             icc: 0,
             aux: 0,
             device: 0,
-            command: self.command,
+            command: AtaCmd::WriteLogDmaExt,
             xfer_param: XferParam {
                 direction: XferDirection::InitiatorToTarget,
                 protocol: AtaProtocol::Dma(XferLength::Pages(self.page_count as u32)),
             },
         }
+    }
+}
+impl Default for Gpl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AtaCmd, Gpl};
+
+    #[test]
+    fn gpl_write_preserves_fields_and_uses_write_opcode() {
+        let command = Gpl::new()
+            .feature(0x1234)
+            .page_number(0x5678)
+            .page_count(2)
+            .address(0x9a)
+            .write_log_dma_ext();
+
+        assert_eq!(command.feature, 0x1234);
+        assert_eq!(command.count, 2);
+        assert_eq!(command.lba, 0x0000_0056_0000_789a);
+        assert!(matches!(command.command, AtaCmd::WriteLogDmaExt));
     }
 }

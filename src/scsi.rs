@@ -8,10 +8,10 @@ pub struct XferParam {
 }
 #[derive(Debug)]
 pub enum Cdb {
-    cdb16([u8; 16]),
-    cdb12([u8; 12]),
-    cdb10([u8; 10]),
-    cdb6([u8; 6]),
+    Cdb16([u8; 16]),
+    Cdb12([u8; 12]),
+    Cdb10([u8; 10]),
+    Cdb6([u8; 6]),
 }
 pub struct Scsi {
     pub cdb: Cdb,
@@ -80,7 +80,7 @@ impl AtaPt16 {
         cdb[13] = self.ata_cmd.device;
         cdb[14] = self.ata_cmd.command as u8;
         cdb[15] = self.ata_cmd.control;
-        Cdb::cdb16(cdb)
+        Cdb::Cdb16(cdb)
     }
     fn xfer_length(&self) -> XferParam {
         XferParam {
@@ -146,11 +146,16 @@ impl Read16 {
         cdb[14] = 0;
         cdb[15] = self.control;
         Scsi {
-            cdb: Cdb::cdb16(cdb),
+            cdb: Cdb::Cdb16(cdb),
             xfer_param: XferParam {
                 direction: XferDirection::TargetToInitiator,
                 length: XferLength::Sectors(self.transfer_length),
             },
         }
+    }
+}
+impl Default for Read16 {
+    fn default() -> Self {
+        Self::new()
     }
 }

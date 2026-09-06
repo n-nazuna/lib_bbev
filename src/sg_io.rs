@@ -30,6 +30,15 @@ pub struct SgIoError {
 #[derive(Debug)]
 pub enum SgIoErrorKind {
     IoctlFailed(io::Error),
+    InvalidTransferLength,
+    TransferTooLarge {
+        requested: usize,
+        maximum: usize,
+    },
+    TransferLengthMismatch {
+        expected: usize,
+        actual: usize,
+    },
     ScsiError {
         status: u8,
         host_status: u16,
@@ -67,14 +76,15 @@ const SG_IO: libc::c_ulong = 0x2285;
 const SG_DXFER_NONE: i32 = -1;
 const SG_DXFER_TO_DEV: i32 = -2;
 const SG_DXFER_FROM_DEV: i32 = -3;
+const DEFAULT_TIMEOUT_MILLIS: u32 = 20_000;
 
 impl Cdb {
     fn as_slice(&self) -> &[u8] {
         match self {
-            Cdb::cdb6(b) => &b[..],
-            Cdb::cdb10(b) => &b[..],
-            Cdb::cdb12(b) => &b[..],
-            Cdb::cdb16(b) => &b[..],
+            Cdb::Cdb6(b) => &b[..],
+            Cdb::Cdb10(b) => &b[..],
+            Cdb::Cdb12(b) => &b[..],
+            Cdb::Cdb16(b) => &b[..],
         }
     }
 }
@@ -88,24 +98,57 @@ impl Device {
         }
     }
 
+    fn transfer_len_bytes(&self, length: XferLength) -> Result<usize, SgIoError> {
+        let requested = match length {
+            XferLength::Sectors(sectors) => usize::try_from(sectors)
+                .ok()
+                .and_then(|sectors| sectors.checked_mul(self.sector_size_bytes as usize)),
+            XferLength::Pages(pages) => usize::try_from(pages)
+                .ok()
+                .and_then(|pages| pages.checked_mul(512)),
+            XferLength::Bytes(bytes) => Some(bytes),
+            XferLength::None => None,
+        }
+        .ok_or(SgIoError {
+            kind: SgIoErrorKind::InvalidTransferLength,
+        })?;
+
+        let maximum = (self.max_sectors_kbytes as usize)
+            .checked_mul(1024)
+            .ok_or(SgIoError {
+                kind: SgIoErrorKind::InvalidTransferLength,
+            })?;
+
+        if requested > maximum {
+            return Err(SgIoError {
+                kind: SgIoErrorKind::TransferTooLarge { requested, maximum },
+            });
+        }
+
+        Ok(requested)
+    }
+
     pub fn allocate(&self, cmd: &Scsi) -> Result<Vec<u8>, SgIoError> {
-        let buf = match cmd.xfer_param.length {
-            XferLength::Sectors(sectors) => vec![0u8; (sectors * self.sector_size_bytes) as usize],
-            XferLength::Pages(pages) => vec![0u8; (pages * 512) as usize],
-            XferLength::Bytes(bytes) => vec![0u8; bytes],
-            XferLength::None => Err(SgIoError {
-                kind: SgIoErrorKind::IoctlFailed(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "No data transfer length specified",
-                )),
-            })?,
-        };
-        Ok(buf)
+        Ok(vec![0; self.transfer_len_bytes(cmd.xfer_param.length)?])
     }
 
     pub fn execute(&self, cmd: &Scsi, buf: &mut [u8]) -> Result<(), SgIoError> {
         let cdb_slice = cmd.cdb.as_slice();
         let xfer = cmd.xfer_param;
+        let expected_len = self.transfer_len_bytes(xfer.length)?;
+
+        if buf.len() != expected_len {
+            return Err(SgIoError {
+                kind: SgIoErrorKind::TransferLengthMismatch {
+                    expected: expected_len,
+                    actual: buf.len(),
+                },
+            });
+        }
+
+        let dxfer_len = u32::try_from(buf.len()).map_err(|_| SgIoError {
+            kind: SgIoErrorKind::InvalidTransferLength,
+        })?;
 
         let dxfer_direction = match xfer.direction {
             XferDirection::TargetToInitiator => SG_DXFER_FROM_DEV,
@@ -120,11 +163,11 @@ impl Device {
             cmd_len: cdb_slice.len() as u8,
             mx_sb_len: sense_buffer.len() as u8,
             iovec_count: 0,
-            dxfer_len: buf.len() as u32,
+            dxfer_len,
             dxferp: buf.as_mut_ptr(),
             cmdp: cdb_slice.as_ptr(),
             sbp: sense_buffer.as_mut_ptr(),
-            timeout: 20,
+            timeout: DEFAULT_TIMEOUT_MILLIS,
             flags: 0,
             pack_id: 0,
             usr_ptr: std::ptr::null_mut(),
@@ -157,5 +200,43 @@ impl Device {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Device, SgIoErrorKind, XferDirection, XferLength};
+    use crate::scsi::{Cdb, Scsi, XferParam};
+
+    fn read_command(sectors: u32) -> Scsi {
+        Scsi {
+            cdb: Cdb::Cdb16([0; 16]),
+            xfer_param: XferParam {
+                direction: XferDirection::TargetToInitiator,
+                length: XferLength::Sectors(sectors),
+            },
+        }
+    }
+
+    #[test]
+    fn allocation_respects_transfer_length_and_device_limit() {
+        let device = Device::new(-1, 512, 1);
+
+        assert_eq!(device.allocate(&read_command(2)).unwrap().len(), 1024);
+        assert!(matches!(
+            device.allocate(&read_command(3)),
+            Err(error) if matches!(error.kind, SgIoErrorKind::TransferTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn execute_rejects_a_buffer_with_the_wrong_length() {
+        let device = Device::new(-1, 512, 1);
+        let mut buffer = [0; 512];
+
+        assert!(matches!(
+            device.execute(&read_command(2), &mut buffer),
+            Err(error) if matches!(error.kind, SgIoErrorKind::TransferLengthMismatch { .. })
+        ));
     }
 }
