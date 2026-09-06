@@ -19,11 +19,7 @@ fn main() {
 
     let fd = file.as_raw_fd();
     let dev = Device::new(fd, 512, 1024);
-    let cmd = ata::Gpl::read_log_dma_ext()
-    .address(0)
-    .page_count(1)
-    .page_number(0)
-    .build();
+    let cmd = ata::Gpl::new().page_count(1).address(0).read_log_dma_ext();
     let cdb = scsi::AtaPt16::new(cmd).build();
 
     let mut buf = vec![0u8; 512];
