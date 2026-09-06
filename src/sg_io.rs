@@ -88,6 +88,21 @@ impl Device {
         }
     }
 
+    pub fn allocate(&self, cmd: &Scsi) -> Result<Vec<u8>, SgIoError> {
+        let buf = match cmd.xfer_param.length {
+            XferLength::Sectors(sectors) => vec![0u8; (sectors * self.sector_size_bytes) as usize],
+            XferLength::Pages(pages) => vec![0u8; (pages * 512) as usize],
+            XferLength::Bytes(bytes) => vec![0u8; bytes],
+            XferLength::None => Err(SgIoError {
+                kind: SgIoErrorKind::IoctlFailed(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "No data transfer length specified",
+                )),
+            })?,
+        };
+        Ok(buf)
+    }
+
     pub fn execute(&self, cmd: &Scsi, buf: &mut [u8]) -> Result<(), SgIoError> {
         let cdb_slice = cmd.cdb.as_slice();
         let xfer = cmd.xfer_param;

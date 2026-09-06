@@ -22,7 +22,7 @@ fn main() {
     let cmd = ata::Gpl::new().page_count(1).address(0).read_log_dma_ext();
     let cdb = scsi::AtaPt16::new(cmd).build();
 
-    let mut buf = vec![0u8; 512];
+    let mut buf = dev.allocate(&cdb).expect("Failed to allocate buffer");
 
     match dev.execute(&cdb, &mut buf) {
         Ok(()) => {
