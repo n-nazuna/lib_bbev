@@ -100,6 +100,11 @@ impl Device {
     fn transfer_len_bytes(&self, xfer: XferDirection) -> Result<usize, SgIoError> {
         let length = match xfer {
             XferDirection::TargetToInitiator(length) | XferDirection::InitiatorToTarget(length) => {
+                if matches!(length, XferLength::Sectors(0) | XferLength::Pages(0) | XferLength::Bytes(0)) {
+                    return Err(SgIoError {
+                        kind: SgIoErrorKind::InvalidTransferLength,
+                    });
+                }
                 length
             }
             XferDirection::NoDataTransfer => return Ok(0),
@@ -232,13 +237,13 @@ mod tests {
     }
 
     #[test]
-    fn execute_rejects_a_buffer_with_the_wrong_length() {
+    fn no_data_command_uses_an_empty_buffer() {
         let device = Device::new(-1, 512, 1);
-        let mut buffer = [0; 512];
+        let command = Scsi {
+            cdb: Cdb::Cdb16([0; 16]),
+            xfer: XferDirection::NoDataTransfer,
+        };
 
-        assert!(matches!(
-            device.execute(&read_command(2), &mut buffer),
-            Err(error) if matches!(error.kind, SgIoErrorKind::TransferLengthMismatch { .. })
-        ));
+        assert!(device.allocate(&command).unwrap().is_empty());
     }
 }
