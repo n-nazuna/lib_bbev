@@ -3,8 +3,8 @@ use std::io;
 
 #[derive(Copy, Clone)]
 pub enum XferDirection {
-    TargetToInitiator,
-    InitiatorToTarget,
+    TargetToInitiator(XferLength),
+    InitiatorToTarget(XferLength),
     NoDataTransfer,
 }
 
@@ -13,7 +13,6 @@ pub enum XferLength {
     Sectors(u32),
     Pages(u32),
     Bytes(usize),
-    None,
 }
 
 pub struct Device {
@@ -98,7 +97,14 @@ impl Device {
         }
     }
 
-    fn transfer_len_bytes(&self, length: XferLength) -> Result<usize, SgIoError> {
+    fn transfer_len_bytes(&self, xfer: XferDirection) -> Result<usize, SgIoError> {
+        let length = match xfer {
+            XferDirection::TargetToInitiator(length) | XferDirection::InitiatorToTarget(length) => {
+                length
+            }
+            XferDirection::NoDataTransfer => return Ok(0),
+        };
+
         let requested = match length {
             XferLength::Sectors(sectors) => usize::try_from(sectors)
                 .ok()
@@ -107,7 +113,6 @@ impl Device {
                 .ok()
                 .and_then(|pages| pages.checked_mul(512)),
             XferLength::Bytes(bytes) => Some(bytes),
-            XferLength::None => None,
         }
         .ok_or(SgIoError {
             kind: SgIoErrorKind::InvalidTransferLength,
@@ -129,13 +134,13 @@ impl Device {
     }
 
     pub fn allocate(&self, cmd: &Scsi) -> Result<Vec<u8>, SgIoError> {
-        Ok(vec![0; self.transfer_len_bytes(cmd.xfer_param.length)?])
+        Ok(vec![0; self.transfer_len_bytes(cmd.xfer)?])
     }
 
     pub fn execute(&self, cmd: &Scsi, buf: &mut [u8]) -> Result<(), SgIoError> {
         let cdb_slice = cmd.cdb.as_slice();
-        let xfer = cmd.xfer_param;
-        let expected_len = self.transfer_len_bytes(xfer.length)?;
+        let xfer = cmd.xfer;
+        let expected_len = self.transfer_len_bytes(xfer)?;
 
         if buf.len() != expected_len {
             return Err(SgIoError {
@@ -150,9 +155,9 @@ impl Device {
             kind: SgIoErrorKind::InvalidTransferLength,
         })?;
 
-        let dxfer_direction = match xfer.direction {
-            XferDirection::TargetToInitiator => SG_DXFER_FROM_DEV,
-            XferDirection::InitiatorToTarget => SG_DXFER_TO_DEV,
+        let dxfer_direction = match xfer {
+            XferDirection::TargetToInitiator(_) => SG_DXFER_FROM_DEV,
+            XferDirection::InitiatorToTarget(_) => SG_DXFER_TO_DEV,
             XferDirection::NoDataTransfer => SG_DXFER_NONE,
         };
 
@@ -206,15 +211,12 @@ impl Device {
 #[cfg(test)]
 mod tests {
     use super::{Device, SgIoErrorKind, XferDirection, XferLength};
-    use crate::scsi::{Cdb, Scsi, XferParam};
+    use crate::scsi::{Cdb, Scsi};
 
     fn read_command(sectors: u32) -> Scsi {
         Scsi {
             cdb: Cdb::Cdb16([0; 16]),
-            xfer_param: XferParam {
-                direction: XferDirection::TargetToInitiator,
-                length: XferLength::Sectors(sectors),
-            },
+            xfer: XferDirection::TargetToInitiator(XferLength::Sectors(sectors)),
         }
     }
 

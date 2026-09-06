@@ -2,34 +2,51 @@ use crate::sg_io::{XferDirection, XferLength};
 
 pub enum AtaProtocol {
     NonData,
-    Pio(XferLength),
-    Dma(XferLength),
+    Pio {
+        direction: DataDirection,
+        length: XferLength,
+    },
+    Dma {
+        direction: DataDirection,
+        length: XferLength,
+    },
     NcqNonData,
-    Ncq(XferLength),
+    Ncq {
+        direction: DataDirection,
+        length: XferLength,
+    },
 }
+
+#[derive(Clone, Copy)]
+pub enum DataDirection {
+    TargetToInitiator,
+    InitiatorToTarget,
+}
+
 impl AtaProtocol {
-    pub fn length(&self) -> XferLength {
+    pub fn xfer(&self) -> XferDirection {
         match self {
-            AtaProtocol::NonData | AtaProtocol::NcqNonData => XferLength::None,
-            AtaProtocol::Pio(len) | AtaProtocol::Dma(len) | AtaProtocol::Ncq(len) => *len,
+            AtaProtocol::NonData | AtaProtocol::NcqNonData => XferDirection::NoDataTransfer,
+            AtaProtocol::Pio { direction, length }
+            | AtaProtocol::Dma { direction, length }
+            | AtaProtocol::Ncq { direction, length } => match direction {
+                DataDirection::TargetToInitiator => XferDirection::TargetToInitiator(*length),
+                DataDirection::InitiatorToTarget => XferDirection::InitiatorToTarget(*length),
+            },
         }
     }
     // ATA PASS-THROUGH CDB PROTOCOL field values (SAT-3)
-    pub fn code(&self, direction: XferDirection) -> u8 {
+    pub fn code(&self) -> u8 {
         match self {
             AtaProtocol::NonData => 0x3,
-            AtaProtocol::Pio(_) => match direction {
-                XferDirection::TargetToInitiator => 0x4,
-                _ => 0x5,
+            AtaProtocol::Pio { direction, .. } => match direction {
+                DataDirection::TargetToInitiator => 0x4,
+                DataDirection::InitiatorToTarget => 0x5,
             },
-            AtaProtocol::Dma(_) => 0x6,
-            AtaProtocol::NcqNonData | AtaProtocol::Ncq(_) => 0xC,
+            AtaProtocol::Dma { .. } => 0x6,
+            AtaProtocol::NcqNonData | AtaProtocol::Ncq { .. } => 0xC,
         }
     }
-}
-pub struct XferParam {
-    pub direction: XferDirection,
-    pub protocol: AtaProtocol,
 }
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -51,7 +68,7 @@ pub struct Ata {
     pub(crate) aux: u32,
     pub(crate) device: u8,
     pub(crate) command: AtaCmd,
-    pub(crate) xfer_param: XferParam,
+    pub(crate) protocol: AtaProtocol,
 }
 impl Ata {
     pub fn new() -> Self {
@@ -64,10 +81,7 @@ impl Ata {
             aux: 0,
             device: 0,
             command: AtaCmd::Nop,
-            xfer_param: XferParam {
-                direction: XferDirection::TargetToInitiator,
-                protocol: AtaProtocol::NonData,
-            },
+            protocol: AtaProtocol::NonData,
         }
     }
     pub fn feature(mut self, feature: u16) -> Self {
@@ -102,12 +116,8 @@ impl Ata {
         self.command = command;
         self
     }
-    pub fn direction(mut self, direction: XferDirection) -> Self {
-        self.xfer_param.direction = direction;
-        self
-    }
     pub fn protocol(mut self, protocol: AtaProtocol) -> Self {
-        self.xfer_param.protocol = protocol;
+        self.protocol = protocol;
         self
     }
     pub fn fis(&self) -> [u8; 20] {
@@ -192,9 +202,9 @@ impl Gpl {
             aux: 0,
             device: 0,
             command: AtaCmd::ReadLogDmaExt,
-            xfer_param: XferParam {
-                direction: XferDirection::TargetToInitiator,
-                protocol: AtaProtocol::Dma(XferLength::Pages(self.page_count as u32)),
+            protocol: AtaProtocol::Dma {
+                direction: DataDirection::TargetToInitiator,
+                length: XferLength::Pages(self.page_count as u32),
             },
         }
     }
@@ -208,9 +218,9 @@ impl Gpl {
             aux: 0,
             device: 0,
             command: AtaCmd::WriteLogDmaExt,
-            xfer_param: XferParam {
-                direction: XferDirection::InitiatorToTarget,
-                protocol: AtaProtocol::Dma(XferLength::Pages(self.page_count as u32)),
+            protocol: AtaProtocol::Dma {
+                direction: DataDirection::InitiatorToTarget,
+                length: XferLength::Pages(self.page_count as u32),
             },
         }
     }
