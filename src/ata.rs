@@ -1,4 +1,6 @@
-use crate::sg_io::{XferDirection, XferLength};
+use crate::{ata_cmd, sg_io::{XferDirection, XferLength}};
+
+pub use crate::ata_cmd::AtaCmd;
 
 pub enum AtaProtocol {
     NonData,
@@ -48,17 +50,6 @@ impl AtaProtocol {
         }
     }
 }
-#[derive(Clone, Copy)]
-#[repr(u8)]
-pub enum AtaCmd {
-    Nop = 0x00,
-    ReadLogExt = 0x2F,
-    ReadLogDmaExt = 0x47,
-    WriteLogExt = 0x3F,
-    WriteLogDmaExt = 0x57,
-    ReadDmaExt = 0x25,
-    WriteDmaExt = 0x35,
-}
 pub struct Ata {
     pub(crate) feature: u16,
     pub(crate) count: u16,
@@ -67,7 +58,7 @@ pub struct Ata {
     pub(crate) icc: u8,
     pub(crate) aux: u32,
     pub(crate) device: u8,
-    pub(crate) command: AtaCmd,
+    pub(crate) command: ata_cmd::AtaCmd,
     pub(crate) protocol: AtaProtocol,
 }
 impl Ata {
@@ -233,7 +224,7 @@ impl Default for Gpl {
 
 #[cfg(test)]
 mod tests {
-    use super::{AtaCmd, Gpl};
+    use super::{Gpl, AtaCmd};
 
     #[test]
     fn gpl_write_preserves_fields_and_uses_write_opcode() {
