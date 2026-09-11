@@ -75,7 +75,7 @@ const SG_IO: libc::c_ulong = 0x2285;
 const SG_DXFER_NONE: i32 = -1;
 const SG_DXFER_TO_DEV: i32 = -2;
 const SG_DXFER_FROM_DEV: i32 = -3;
-const DEFAULT_TIMEOUT_MILLIS: u32 = 20_000;
+const DEFAULT_TIMEOUT_MILLIS: u32 = 1200_000_000;
 
 impl Cdb {
     fn as_slice(&self) -> &[u8] {
