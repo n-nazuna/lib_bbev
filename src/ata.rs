@@ -1,39 +1,30 @@
-use crate::{ata_cmd, sg_io::{XferDirection, XferLength}};
+use crate::{ata_cmd, sg_io::{XferDirection, XferLength, XferParameter}};
 
 pub use crate::ata_cmd::AtaCmd;
 
 pub enum AtaProtocol {
     NonData,
     Pio {
-        direction: DataDirection,
-        length: XferLength,
+        direction: XferDirection,
     },
     Dma {
-        direction: DataDirection,
-        length: XferLength,
+        direction: XferDirection,
     },
     NcqNonData,
     Ncq {
-        direction: DataDirection,
-        length: XferLength,
+        direction: XferDirection,
     },
 }
 
-#[derive(Clone, Copy)]
-pub enum DataDirection {
-    TargetToInitiator,
-    InitiatorToTarget,
-}
-
 impl AtaProtocol {
-    pub fn xfer(&self) -> XferDirection {
+    pub fn xfer(&self) -> XferParameter {
         match self {
-            AtaProtocol::NonData | AtaProtocol::NcqNonData => XferDirection::NoDataTransfer,
-            AtaProtocol::Pio { direction, length }
-            | AtaProtocol::Dma { direction, length }
-            | AtaProtocol::Ncq { direction, length } => match direction {
-                DataDirection::TargetToInitiator => XferDirection::TargetToInitiator(*length),
-                DataDirection::InitiatorToTarget => XferDirection::InitiatorToTarget(*length),
+            AtaProtocol::NonData | AtaProtocol::NcqNonData => XferParameter::NoDataTransfer,
+            AtaProtocol::Pio { direction}
+            | AtaProtocol::Dma { direction}
+            | AtaProtocol::Ncq { direction} => match direction {
+                XferDirection::TargetToInitiator(_) => XferParameter::XferDirection(*direction),
+                XferDirection::InitiatorToTarget(_) => XferParameter::XferDirection(*direction),
             },
         }
     }
@@ -42,8 +33,8 @@ impl AtaProtocol {
         match self {
             AtaProtocol::NonData => 0x3,
             AtaProtocol::Pio { direction, .. } => match direction {
-                DataDirection::TargetToInitiator => 0x4,
-                DataDirection::InitiatorToTarget => 0x5,
+                XferDirection::TargetToInitiator(_) => 0x4,
+                XferDirection::InitiatorToTarget(_) => 0x5,
             },
             AtaProtocol::Dma { .. } => 0x6,
             AtaProtocol::NcqNonData | AtaProtocol::Ncq { .. } => 0xC,
@@ -194,8 +185,7 @@ impl Gpl {
             device: 0,
             command: AtaCmd::ReadLogDmaExt,
             protocol: AtaProtocol::Dma {
-                direction: DataDirection::TargetToInitiator,
-                length: XferLength::Pages(self.page_count as u32),
+                direction: XferDirection::TargetToInitiator(XferLength::Pages(self.page_count as u32)),
             },
         }
     }
@@ -210,8 +200,7 @@ impl Gpl {
             device: 0,
             command: AtaCmd::WriteLogDmaExt,
             protocol: AtaProtocol::Dma {
-                direction: DataDirection::InitiatorToTarget,
-                length: XferLength::Pages(self.page_count as u32),
+                direction: XferDirection::InitiatorToTarget(XferLength::Pages(self.page_count as u32)),
             },
         }
     }

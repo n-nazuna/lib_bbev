@@ -5,6 +5,10 @@ use std::io;
 pub enum XferDirection {
     TargetToInitiator(XferLength),
     InitiatorToTarget(XferLength),
+}
+#[derive(Copy, Clone)]
+pub enum XferParameter {
+    XferDirection(XferDirection),
     NoDataTransfer,
 }
 
@@ -97,9 +101,10 @@ impl Device {
         }
     }
 
-    fn transfer_len_bytes(&self, xfer: XferDirection) -> Result<usize, SgIoError> {
+    fn transfer_len_bytes(&self, xfer: XferParameter) -> Result<usize, SgIoError> {
         let length = match xfer {
-            XferDirection::TargetToInitiator(length) | XferDirection::InitiatorToTarget(length) => {
+            XferParameter::XferDirection(XferDirection::TargetToInitiator(length))
+            | XferParameter::XferDirection(XferDirection::InitiatorToTarget(length)) => {
                 if matches!(length, XferLength::Sectors(0) | XferLength::Pages(0) | XferLength::Bytes(0)) {
                     return Err(SgIoError {
                         kind: SgIoErrorKind::InvalidTransferLength,
@@ -107,7 +112,7 @@ impl Device {
                 }
                 length
             }
-            XferDirection::NoDataTransfer => return Ok(0),
+            XferParameter::NoDataTransfer => return Ok(0),
         };
 
         let requested = match length {
@@ -161,9 +166,9 @@ impl Device {
         })?;
 
         let dxfer_direction = match xfer {
-            XferDirection::TargetToInitiator(_) => SG_DXFER_FROM_DEV,
-            XferDirection::InitiatorToTarget(_) => SG_DXFER_TO_DEV,
-            XferDirection::NoDataTransfer => SG_DXFER_NONE,
+            XferParameter::XferDirection(XferDirection::TargetToInitiator(_)) => SG_DXFER_FROM_DEV,
+            XferParameter::XferDirection(XferDirection::InitiatorToTarget(_)) => SG_DXFER_TO_DEV,
+            XferParameter::NoDataTransfer => SG_DXFER_NONE,
         };
 
         let mut sense_buffer = [0u8; 32];
@@ -215,13 +220,13 @@ impl Device {
 
 #[cfg(test)]
 mod tests {
-    use super::{Device, SgIoErrorKind, XferDirection, XferLength};
+    use super::{Device, SgIoErrorKind, XferDirection, XferLength, XferParameter};
     use crate::scsi::{Cdb, Scsi};
 
     fn read_command(sectors: u32) -> Scsi {
         Scsi {
             cdb: Cdb::Cdb16([0; 16]),
-            xfer: XferDirection::TargetToInitiator(XferLength::Sectors(sectors)),
+            xfer: XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Sectors(sectors))),
         }
     }
 
@@ -241,7 +246,7 @@ mod tests {
         let device = Device::new(-1, 512, 1);
         let command = Scsi {
             cdb: Cdb::Cdb16([0; 16]),
-            xfer: XferDirection::NoDataTransfer,
+            xfer: XferParameter::NoDataTransfer,
         };
 
         assert!(device.allocate(&command).unwrap().is_empty());

@@ -1,5 +1,5 @@
 use crate::ata::Ata;
-use crate::sg_io::{XferDirection, XferLength};
+use crate::sg_io::{XferParameter, XferDirection, XferLength};
 #[derive(Debug)]
 pub enum Cdb {
     Cdb16([u8; 16]),
@@ -9,7 +9,7 @@ pub enum Cdb {
 }
 pub struct Scsi {
     pub cdb: Cdb,
-    pub xfer: XferDirection,
+    pub xfer: XferParameter,
 }
 pub struct AtaPt16 {
     ata_cmd: Ata,
@@ -23,23 +23,23 @@ impl AtaPt16 {
         let ck_cond = 0u8;
         let xfer = self.ata_cmd.protocol.xfer();
         let t_dir = match xfer {
-            XferDirection::TargetToInitiator(_) => 1u8,
-            XferDirection::InitiatorToTarget(_) => 0u8,
-            XferDirection::NoDataTransfer => 0u8,
+            XferParameter::XferDirection(XferDirection::TargetToInitiator(_)) => 1u8,
+            XferParameter::XferDirection(XferDirection::InitiatorToTarget(_)) => 0u8,
+            XferParameter::NoDataTransfer => 0u8,
         };
         let (byte_block, t_type) = match xfer {
-            XferDirection::TargetToInitiator(length)
-            | XferDirection::InitiatorToTarget(length) => match length {
+            XferParameter::XferDirection(XferDirection::TargetToInitiator(length))
+            | XferParameter::XferDirection(XferDirection::InitiatorToTarget(length)) => match length {
             XferLength::Pages(_) => (1u8, 0u8),
             XferLength::Sectors(_) => (1u8, 0u8),
             XferLength::Bytes(_) => (0u8, 0u8),
             },
-            XferDirection::NoDataTransfer => (0u8, 0u8),
+            XferParameter::NoDataTransfer => (0u8, 0u8),
         };
         let t_length = match (xfer, self.ata_cmd.command as u8) {
-            (XferDirection::NoDataTransfer, _) => 0b00,
-            (XferDirection::TargetToInitiator(XferLength::Pages(_)), 0x66)
-            | (XferDirection::InitiatorToTarget(XferLength::Pages(_)), 0x66) => 0b11,
+            (XferParameter::NoDataTransfer, _) => 0b00,
+            (XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Pages(_))), 0x66)
+            | (XferParameter::XferDirection(XferDirection::InitiatorToTarget(XferLength::Pages(_))), 0x66) => 0b11,
             (_, 0x60 | 0x61 | 0x63 | 0x65) => 0b01, // FPDMA
             (_, _) => 0b10,
         };
@@ -77,7 +77,7 @@ impl AtaPt16 {
         cdb[15] = self.ata_cmd.control;
         Cdb::Cdb16(cdb)
     }
-    fn xfer(&self) -> XferDirection {
+    fn xfer(&self) -> XferParameter {
         self.ata_cmd.protocol.xfer()
     }
     pub fn build(&self) -> Scsi {
@@ -139,9 +139,9 @@ impl Read16 {
         cdb[15] = self.control;
         Scsi {
             cdb: Cdb::Cdb16(cdb),
-            xfer: XferDirection::TargetToInitiator(XferLength::Sectors(
+            xfer: XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Sectors(
                 self.transfer_length,
-            )),
+            ))),
         }
     }
 }
