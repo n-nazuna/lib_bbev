@@ -256,4 +256,35 @@ mod tests {
 
         assert!(device.allocate(&command).unwrap().is_empty());
     }
+
+    #[test]
+    fn zero_length_transfer_is_rejected() {
+        let device = Device::new(-1, 512, 1);
+
+        assert!(matches!(
+            device.allocate(&read_command(0)),
+            Err(error) if matches!(error.kind, SgIoErrorKind::InvalidTransferLength)
+        ));
+    }
+
+    #[test]
+    fn pages_and_bytes_lengths_are_converted_to_the_expected_byte_count() {
+        let device = Device::new(-1, 512, 10);
+
+        let pages = Scsi {
+            cdb: Cdb::Cdb16([0; 16]),
+            xfer: XferParameter::XferDirection(XferDirection::TargetToInitiator(
+                XferLength::Pages(2),
+            )),
+        };
+        assert_eq!(device.allocate(&pages).unwrap().len(), 1024);
+
+        let bytes = Scsi {
+            cdb: Cdb::Cdb16([0; 16]),
+            xfer: XferParameter::XferDirection(XferDirection::TargetToInitiator(
+                XferLength::Bytes(777),
+            )),
+        };
+        assert_eq!(device.allocate(&bytes).unwrap().len(), 777);
+    }
 }

@@ -202,7 +202,30 @@ impl Default for Gpl {
 
 #[cfg(test)]
 mod tests {
-    use super::{AtaCmd, Gpl};
+    use super::{Ata, AtaCmd, AtaProtocol, Gpl};
+    use crate::sg_io::{XferDirection, XferLength, XferParameter};
+
+    #[test]
+    fn fis_places_each_field_at_its_register_fis_byte_offset() {
+        let fis = Ata::new()
+            .feature(0x1234)
+            .count(0x5678)
+            .lba(0x0102_0304_0506)
+            .control(0xBB)
+            .icc(0xCC)
+            .aux(0x1122_3344)
+            .device(0xAA)
+            .command(AtaCmd::ReadLogDmaExt)
+            .fis();
+
+        assert_eq!(
+            fis,
+            [
+                0x27, 0x80, 0x47, 0x34, 0x06, 0x05, 0x04, 0xAA, 0x03, 0x02, 0x01, 0x12, 0x78, 0x56,
+                0xCC, 0xBB, 0x44, 0x33, 0x22, 0x11,
+            ]
+        );
+    }
 
     #[test]
     fn gpl_write_preserves_fields_and_uses_write_opcode() {
@@ -217,5 +240,55 @@ mod tests {
         assert_eq!(command.count, 2);
         assert_eq!(command.lba, 0x0000_0056_0000_789a);
         assert!(matches!(command.command, AtaCmd::WriteLogDmaExt));
+        assert!(matches!(
+            command.protocol,
+            AtaProtocol::Dma {
+                direction: XferDirection::InitiatorToTarget(XferLength::Pages(2))
+            }
+        ));
+    }
+
+    #[test]
+    fn gpl_read_preserves_fields_and_uses_read_opcode() {
+        let command = Gpl::new()
+            .feature(0x1234)
+            .page_number(0x5678)
+            .page_count(2)
+            .address(0x9a)
+            .read_log_dma_ext();
+
+        assert_eq!(command.feature, 0x1234);
+        assert_eq!(command.count, 2);
+        assert_eq!(command.lba, 0x0000_0056_0000_789a);
+        assert!(matches!(command.command, AtaCmd::ReadLogDmaExt));
+        assert!(matches!(
+            command.protocol,
+            AtaProtocol::Dma {
+                direction: XferDirection::TargetToInitiator(XferLength::Pages(2))
+            }
+        ));
+    }
+
+    #[test]
+    fn xfer_maps_non_data_protocols_to_no_data_transfer() {
+        assert!(matches!(
+            AtaProtocol::NonData.xfer(),
+            XferParameter::NoDataTransfer
+        ));
+        assert!(matches!(
+            AtaProtocol::NcqNonData.xfer(),
+            XferParameter::NoDataTransfer
+        ));
+    }
+
+    #[test]
+    fn xfer_carries_direction_and_length_for_data_protocols() {
+        let direction = XferDirection::InitiatorToTarget(XferLength::Sectors(4));
+        let xfer = (AtaProtocol::Dma { direction }).xfer();
+
+        assert!(matches!(
+            xfer,
+            XferParameter::XferDirection(XferDirection::InitiatorToTarget(XferLength::Sectors(4)))
+        ));
     }
 }

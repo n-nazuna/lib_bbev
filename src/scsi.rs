@@ -169,3 +169,122 @@ impl Default for Read16 {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AtaPt16, Cdb, Read16};
+    use crate::ata::{Ata, AtaCmd, AtaProtocol};
+    use crate::sg_io::{XferDirection, XferLength, XferParameter};
+
+    fn ata_with_protocol(protocol: AtaProtocol) -> Ata {
+        Ata::new().protocol(protocol)
+    }
+
+    #[test]
+    fn code_maps_each_protocol_to_its_sat3_value() {
+        assert_eq!(
+            AtaPt16::new(ata_with_protocol(AtaProtocol::NonData)).code(),
+            0x3
+        );
+        assert_eq!(
+            AtaPt16::new(ata_with_protocol(AtaProtocol::Pio {
+                direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
+            }))
+            .code(),
+            0x4
+        );
+        assert_eq!(
+            AtaPt16::new(ata_with_protocol(AtaProtocol::Pio {
+                direction: XferDirection::InitiatorToTarget(XferLength::Sectors(1)),
+            }))
+            .code(),
+            0x5
+        );
+        assert_eq!(
+            AtaPt16::new(ata_with_protocol(AtaProtocol::Dma {
+                direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
+            }))
+            .code(),
+            0x6
+        );
+        assert_eq!(
+            AtaPt16::new(ata_with_protocol(AtaProtocol::NcqNonData)).code(),
+            0xC
+        );
+        assert_eq!(
+            AtaPt16::new(ata_with_protocol(AtaProtocol::Ncq {
+                direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
+            }))
+            .code(),
+            0xC
+        );
+    }
+
+    #[test]
+    fn build_encodes_ata_pass_through_16_cdb_and_xfer() {
+        let ata_cmd = Ata::new()
+            .feature(0x1234)
+            .count(0x5678)
+            .lba(0x0102_0304_0506)
+            .control(0xBB)
+            .device(0xAA)
+            .command(AtaCmd::ReadLogDmaExt)
+            .protocol(AtaProtocol::Dma {
+                direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
+            });
+
+        let scsi = AtaPt16::new(ata_cmd).build();
+
+        let Cdb::Cdb16(cdb) = scsi.cdb else {
+            panic!("expected a 16-byte CDB");
+        };
+        assert_eq!(cdb[0], 0x85); // ATA PASS-THROUGH (16)
+        assert_eq!(cdb[1], 0x6 << 1 | 1); // DMA protocol, EXTEND bit set
+        assert_eq!(cdb[2], 0x16); // byte2: t_dir=1, byte_block=1, t_length=0b10
+        assert_eq!(cdb[3], 0x12); // feature high
+        assert_eq!(cdb[4], 0x34); // feature low
+        assert_eq!(cdb[5], 0x56); // count high
+        assert_eq!(cdb[6], 0x78); // count low
+        assert_eq!(cdb[7], 0x03); // lba(31:24)
+        assert_eq!(cdb[8], 0x06); // lba(7:0)
+        assert_eq!(cdb[9], 0x02); // lba(39:32)
+        assert_eq!(cdb[10], 0x05); // lba(15:8)
+        assert_eq!(cdb[11], 0x01); // lba(47:40)
+        assert_eq!(cdb[12], 0x04); // lba(23:16)
+        assert_eq!(cdb[13], 0xAA); // device
+        assert_eq!(cdb[14], AtaCmd::ReadLogDmaExt as u8);
+        assert_eq!(cdb[15], 0xBB); // control
+
+        assert!(matches!(
+            scsi.xfer,
+            XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Sectors(1)))
+        ));
+    }
+
+    #[test]
+    fn read16_build_encodes_read_16_cdb_and_xfer() {
+        let scsi = Read16::new()
+            .lba(0x0102_0304_0506_0708)
+            .transfer_length(0x1000)
+            .fua(true)
+            .control(0x55)
+            .build();
+
+        let Cdb::Cdb16(cdb) = scsi.cdb else {
+            panic!("expected a 16-byte CDB");
+        };
+        assert_eq!(cdb[0], 0x88); // READ (16)
+        assert_eq!(cdb[1], 0b100); // FUA
+        assert_eq!(&cdb[2..10], &0x0102_0304_0506_0708u64.to_be_bytes());
+        assert_eq!(&cdb[10..14], &0x1000u32.to_be_bytes());
+        assert_eq!(cdb[14], 0);
+        assert_eq!(cdb[15], 0x55);
+
+        assert!(matches!(
+            scsi.xfer,
+            XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Sectors(
+                0x1000
+            )))
+        ));
+    }
+}
