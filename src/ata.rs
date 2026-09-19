@@ -1,43 +1,28 @@
-use crate::{ata_cmd, sg_io::{XferDirection, XferLength, XferParameter}};
+use crate::{
+    ata_cmd,
+    sg_io::{XferDirection, XferLength, XferParameter},
+};
 
 pub use crate::ata_cmd::AtaCmd;
 
 pub enum AtaProtocol {
     NonData,
-    Pio {
-        direction: XferDirection,
-    },
-    Dma {
-        direction: XferDirection,
-    },
+    Pio { direction: XferDirection },
+    Dma { direction: XferDirection },
     NcqNonData,
-    Ncq {
-        direction: XferDirection,
-    },
+    Ncq { direction: XferDirection },
 }
 
 impl AtaProtocol {
     pub fn xfer(&self) -> XferParameter {
         match self {
             AtaProtocol::NonData | AtaProtocol::NcqNonData => XferParameter::NoDataTransfer,
-            AtaProtocol::Pio { direction}
-            | AtaProtocol::Dma { direction}
-            | AtaProtocol::Ncq { direction} => match direction {
+            AtaProtocol::Pio { direction }
+            | AtaProtocol::Dma { direction }
+            | AtaProtocol::Ncq { direction } => match direction {
                 XferDirection::TargetToInitiator(_) => XferParameter::XferDirection(*direction),
                 XferDirection::InitiatorToTarget(_) => XferParameter::XferDirection(*direction),
             },
-        }
-    }
-    // ATA PASS-THROUGH CDB PROTOCOL field values (SAT-3)
-    pub fn code(&self) -> u8 {
-        match self {
-            AtaProtocol::NonData => 0x3,
-            AtaProtocol::Pio { direction, .. } => match direction {
-                XferDirection::TargetToInitiator(_) => 0x4,
-                XferDirection::InitiatorToTarget(_) => 0x5,
-            },
-            AtaProtocol::Dma { .. } => 0x6,
-            AtaProtocol::NcqNonData | AtaProtocol::Ncq { .. } => 0xC,
         }
     }
 }
@@ -185,7 +170,9 @@ impl Gpl {
             device: 0,
             command: AtaCmd::ReadLogDmaExt,
             protocol: AtaProtocol::Dma {
-                direction: XferDirection::TargetToInitiator(XferLength::Pages(self.page_count as u32)),
+                direction: XferDirection::TargetToInitiator(XferLength::Pages(
+                    self.page_count as u32,
+                )),
             },
         }
     }
@@ -200,7 +187,9 @@ impl Gpl {
             device: 0,
             command: AtaCmd::WriteLogDmaExt,
             protocol: AtaProtocol::Dma {
-                direction: XferDirection::InitiatorToTarget(XferLength::Pages(self.page_count as u32)),
+                direction: XferDirection::InitiatorToTarget(XferLength::Pages(
+                    self.page_count as u32,
+                )),
             },
         }
     }
@@ -213,7 +202,7 @@ impl Default for Gpl {
 
 #[cfg(test)]
 mod tests {
-    use super::{Gpl, AtaCmd};
+    use super::{AtaCmd, Gpl};
 
     #[test]
     fn gpl_write_preserves_fields_and_uses_write_opcode() {

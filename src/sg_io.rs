@@ -105,7 +105,10 @@ impl Device {
         let length = match xfer {
             XferParameter::XferDirection(XferDirection::TargetToInitiator(length))
             | XferParameter::XferDirection(XferDirection::InitiatorToTarget(length)) => {
-                if matches!(length, XferLength::Sectors(0) | XferLength::Pages(0) | XferLength::Bytes(0)) {
+                if matches!(
+                    length,
+                    XferLength::Sectors(0) | XferLength::Pages(0) | XferLength::Bytes(0)
+                ) {
                     return Err(SgIoError {
                         kind: SgIoErrorKind::InvalidTransferLength,
                     });
@@ -226,7 +229,9 @@ mod tests {
     fn read_command(sectors: u32) -> Scsi {
         Scsi {
             cdb: Cdb::Cdb16([0; 16]),
-            xfer: XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Sectors(sectors))),
+            xfer: XferParameter::XferDirection(XferDirection::TargetToInitiator(
+                XferLength::Sectors(sectors),
+            )),
         }
     }
 
