@@ -193,6 +193,40 @@ impl Gpl {
             },
         }
     }
+    pub fn receive_fpdma_queued(self) -> Ata {
+        Ata {
+            feature: self.page_count,
+            count: 0x01 << 8, // REAF LOG DMA EXT SUBCOMMAND
+            lba: self.lba(),
+            control: 0,
+            icc: 0,
+            aux: self.feature as u32,
+            device: 0,
+            command: AtaCmd::ReceiveFpdmaQueued,
+            protocol: AtaProtocol::Ncq {
+                direction: XferDirection::TargetToInitiator(XferLength::Pages(
+                    self.page_count as u32,
+                )),
+            },
+        }
+    }
+    pub fn send_fpdma_queued(self) -> Ata {
+        Ata {
+            feature: self.page_count,
+            count: 0x01 << 8, // WRITE LOG DMA EXT SUBCOMMAND
+            lba: self.lba(),
+            control: 0,
+            icc: 0,
+            aux: self.feature as u32,
+            device: 0,
+            command: AtaCmd::SendFpdmaQueued,
+            protocol: AtaProtocol::Ncq {
+                direction: XferDirection::InitiatorToTarget(XferLength::Pages(
+                    self.page_count as u32,
+                )),
+            },
+        }
+    }
 }
 impl Default for Gpl {
     fn default() -> Self {
