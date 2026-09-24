@@ -3,6 +3,7 @@ use crate::ata::AtaProtocol;
 use crate::sg_io::{XferDirection, XferLength, XferParameter};
 #[derive(Debug)]
 pub enum Cdb {
+    Cdb32([u8; 32]),
     Cdb16([u8; 16]),
     Cdb12([u8; 12]),
     Cdb10([u8; 10]),
@@ -12,12 +13,12 @@ pub struct Scsi {
     pub cdb: Cdb,
     pub xfer: XferParameter,
 }
-pub struct AtaPt16 {
+pub struct AtaPt {
     ata_cmd: Ata,
 }
-impl AtaPt16 {
+impl AtaPt {
     pub fn new(ata_cmd: Ata) -> Self {
-        AtaPt16 { ata_cmd }
+        AtaPt { ata_cmd }
     }
     pub fn code(&self) -> u8 {
         match &self.ata_cmd.protocol {
@@ -75,8 +76,8 @@ impl AtaPt16 {
             | t_length
     }
 }
-impl AtaPt16 {
-    fn cdb(&self) -> Cdb {
+impl AtaPt {
+    fn build_cdb16(&self) -> Cdb {
         let mut cdb = [0u8; 16];
         cdb[0] = 0x85; // ATA PASS-THROUGH (16)
         cdb[1] = self.code() << 1 | 1;
@@ -96,12 +97,39 @@ impl AtaPt16 {
         cdb[15] = self.ata_cmd.control;
         Cdb::Cdb16(cdb)
     }
+    fn build_cdb32(&self) -> Cdb {
+        let mut cdb = [0u8; 32];
+        cdb[0] = 0x7f; // ATA PASS-THROUGH (16)
+        cdb[1] = self.ata_cmd.control as u8;
+        cdb[2..6].copy_from_slice(&[0u8; 4]);
+        cdb[7] = 0x18; // ADDITIONAL CDB LENGTH
+        cdb[8..10].copy_from_slice(&0x1FF0u16.to_be_bytes()); // SERVICE ACTION
+        cdb[10] = self.code() << 1 | 1;
+        cdb[11] = self.byte2();
+        cdb[12..14].copy_from_slice(&[0u8; 2]);
+        cdb[14..20].copy_from_slice(&self.ata_cmd.lba.to_be_bytes()[2..8]);
+        cdb[20..22].copy_from_slice(&self.ata_cmd.feature.to_be_bytes());
+        cdb[22..24].copy_from_slice(&self.ata_cmd.count.to_be_bytes());
+        cdb[24] = self.ata_cmd.device;
+        cdb[25] = self.ata_cmd.command as u8;
+        cdb[26] = 0;
+        cdb[27] = self.ata_cmd.icc as u8;
+        cdb[28..32].copy_from_slice(&self.ata_cmd.aux.to_be_bytes());
+
+        Cdb::Cdb32(cdb)
+    }
     fn xfer(&self) -> XferParameter {
         self.ata_cmd.protocol.xfer()
     }
-    pub fn build(&self) -> Scsi {
+    pub fn cdb16(&self) -> Scsi {
         Scsi {
-            cdb: self.cdb(),
+            cdb: self.build_cdb16(),
+            xfer: self.xfer(),
+        }
+    }
+    pub fn cdb32(&self) -> Scsi {
+        Scsi {
+            cdb: self.build_cdb32(),
             xfer: self.xfer(),
         }
     }
@@ -172,7 +200,7 @@ impl Default for Read16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AtaPt16, Cdb, Read16};
+    use super::{AtaPt, Cdb, Read16};
     use crate::ata::{Ata, AtaCmd, AtaProtocol};
     use crate::sg_io::{XferDirection, XferLength, XferParameter};
 
@@ -183,36 +211,36 @@ mod tests {
     #[test]
     fn code_maps_each_protocol_to_its_sat3_value() {
         assert_eq!(
-            AtaPt16::new(ata_with_protocol(AtaProtocol::NonData)).code(),
+            AtaPt::new(ata_with_protocol(AtaProtocol::NonData)).code(),
             0x3
         );
         assert_eq!(
-            AtaPt16::new(ata_with_protocol(AtaProtocol::Pio {
+            AtaPt::new(ata_with_protocol(AtaProtocol::Pio {
                 direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
             }))
             .code(),
             0x4
         );
         assert_eq!(
-            AtaPt16::new(ata_with_protocol(AtaProtocol::Pio {
+            AtaPt::new(ata_with_protocol(AtaProtocol::Pio {
                 direction: XferDirection::InitiatorToTarget(XferLength::Sectors(1)),
             }))
             .code(),
             0x5
         );
         assert_eq!(
-            AtaPt16::new(ata_with_protocol(AtaProtocol::Dma {
+            AtaPt::new(ata_with_protocol(AtaProtocol::Dma {
                 direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
             }))
             .code(),
             0x6
         );
         assert_eq!(
-            AtaPt16::new(ata_with_protocol(AtaProtocol::NcqNonData)).code(),
+            AtaPt::new(ata_with_protocol(AtaProtocol::NcqNonData)).code(),
             0xC
         );
         assert_eq!(
-            AtaPt16::new(ata_with_protocol(AtaProtocol::Ncq {
+            AtaPt::new(ata_with_protocol(AtaProtocol::Ncq {
                 direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
             }))
             .code(),
@@ -233,7 +261,7 @@ mod tests {
                 direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
             });
 
-        let scsi = AtaPt16::new(ata_cmd).build();
+        let scsi = AtaPt::new(ata_cmd).cdb16();
 
         let Cdb::Cdb16(cdb) = scsi.cdb else {
             panic!("expected a 16-byte CDB");
@@ -255,6 +283,40 @@ mod tests {
         assert_eq!(cdb[14], AtaCmd::ReadLogDmaExt as u8);
         assert_eq!(cdb[15], 0xBB); // control
 
+        assert!(matches!(
+            scsi.xfer,
+            XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Sectors(1)))
+        ));
+    }
+
+    #[test]
+    fn build_encodes_ata_pass_through_32_cdb_and_xfer() {
+        let ata_cmd = Ata::new()
+            .feature(0x1234)
+            .count(0x5678)
+            .lba(0x0102_0304_0506)
+            .control(0xBB)
+            .icc(0xCC)
+            .aux(0x1122_3344)
+            .device(0xAA)
+            .command(AtaCmd::ReadLogDmaExt)
+            .protocol(AtaProtocol::Dma {
+                direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
+            });
+
+        let scsi = AtaPt::new(ata_cmd).cdb32();
+
+        let Cdb::Cdb32(cdb) = scsi.cdb else {
+            panic!("expected a 32-byte CDB");
+        };
+        assert_eq!(
+            cdb,
+            [
+                0x7F, 0xBB, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x1F, 0xF0, 0x0D, 0x16,
+                0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x12, 0x34, 0x56, 0x78,
+                0xAA, AtaCmd::ReadLogDmaExt as u8, 0x00, 0xCC, 0x11, 0x22, 0x33, 0x44,
+            ]
+        );
         assert!(matches!(
             scsi.xfer,
             XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Sectors(1)))
