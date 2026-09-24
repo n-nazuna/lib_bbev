@@ -144,11 +144,11 @@ const DEFAULT_TIMEOUT_MILLIS: u32 = 1200_000_000;
 impl Cdb {
     fn as_slice(&self) -> &[u8] {
         match self {
-            Cdb::Cdb32(b) => &b[..],
             Cdb::Cdb6(b) => &b[..],
             Cdb::Cdb10(b) => &b[..],
             Cdb::Cdb12(b) => &b[..],
             Cdb::Cdb16(b) => &b[..],
+            Cdb::Cdb32(b) => &b[..],
         }
     }
 }
