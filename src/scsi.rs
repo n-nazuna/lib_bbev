@@ -48,7 +48,7 @@ impl AtaPt16 {
                     XferLength::Bytes(_) => (0u8, 0u8),
                 }
             }
-            XferParameter::NoDataTransfer => (0u8, 0u8),
+            XferParameter::NoDataTransfer => (1u8, 0u8),
         };
         let t_length = match (xfer, self.ata_cmd.command as u8) {
             (XferParameter::NoDataTransfer, _) => 0b00,
