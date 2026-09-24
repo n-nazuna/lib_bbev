@@ -99,7 +99,7 @@ impl AtaPt {
     }
     fn build_cdb32(&self) -> Cdb {
         let mut cdb = [0u8; 32];
-        cdb[0] = 0x7f; // ATA PASS-THROUGH (16)
+        cdb[0] = 0x7f; // ATA PASS-THROUGH (32)
         cdb[1] = self.ata_cmd.control as u8;
         cdb[2..6].copy_from_slice(&[0u8; 4]);
         cdb[7] = 0x18; // ADDITIONAL CDB LENGTH
