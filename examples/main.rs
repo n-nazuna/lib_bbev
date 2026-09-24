@@ -19,7 +19,7 @@ fn main() {
 
     let fd = file.as_raw_fd();
     let dev = Device::new(fd, 512, 1024);
-    let cmd = ata::Gpl::new().page_count(1).address(0).read_log_dma_ext();
+    let cmd = ata::Gpl::new().page_count(1).address(0xFF).read_log_dma_ext();
     let cdb = scsi::AtaPt16::new(cmd).build();
 
     let mut buf = dev.allocate(&cdb).expect("Failed to allocate buffer");
@@ -35,7 +35,7 @@ fn main() {
             }
         }
         Err(e) => {
-            eprintln!("Error: {:?}", e);
+            eprintln!("Error: {e}");
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::scsi::{Cdb, Scsi};
+use std::fmt;
 use std::io;
 
 #[derive(Copy, Clone)]
@@ -46,8 +47,67 @@ pub enum SgIoErrorKind {
         status: u8,
         host_status: u16,
         driver_status: u16,
+        sense: [u8; 32],
     },
 }
+
+fn format_sense(f: &mut fmt::Formatter<'_>, sense: &[u8; 32]) -> fmt::Result {
+    let highlighted_indices: &[usize] = match sense[0] & 0x7f {
+        0x70 | 0x71 => &[2, 12, 13],
+        0x72 | 0x73 => &[1, 2, 3],
+        _ => &[],
+    };
+
+    for (index, byte) in sense.iter().enumerate() {
+        if index != 0 {
+            write!(f, " ")?;
+        }
+
+        if highlighted_indices.contains(&index) {
+            write!(f, "[{byte:02X}]")?;
+        } else {
+            write!(f, "{byte:02X}")?;
+        }
+    }
+
+    Ok(())
+}
+
+impl fmt::Display for SgIoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            SgIoErrorKind::IoctlFailed(error) => write!(f, "SG_IO ioctl failed: {error}"),
+            SgIoErrorKind::InvalidTransferLength => write!(f, "invalid transfer length"),
+            SgIoErrorKind::TransferTooLarge { requested, maximum } => {
+                write!(
+                    f,
+                    "transfer too large: requested={requested} bytes, maximum={maximum} bytes"
+                )
+            }
+            SgIoErrorKind::TransferLengthMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "transfer length mismatch: expected={expected} bytes, actual={actual} bytes"
+                )
+            }
+            SgIoErrorKind::ScsiError {
+                status,
+                host_status,
+                driver_status,
+                sense,
+            } => {
+                write!(
+                    f,
+                    "SCSI command failed: status=0x{status:02X}, host_status=0x{host_status:04X}, \
+                     driver_status=0x{driver_status:04X}, sense="
+                )?;
+                format_sense(f, sense)
+            }
+        }
+    }
+}
+
+impl std::error::Error for SgIoError {}
 
 #[repr(C)]
 struct SgIoHdr {
@@ -213,6 +273,7 @@ impl Device {
                     status: hdr.status,
                     host_status: hdr.host_status,
                     driver_status: hdr.driver_status,
+                    sense: sense_buffer,
                 },
             });
         }
@@ -223,7 +284,7 @@ impl Device {
 
 #[cfg(test)]
 mod tests {
-    use super::{Device, SgIoErrorKind, XferDirection, XferLength, XferParameter};
+    use super::{Device, SgIoError, SgIoErrorKind, XferDirection, XferLength, XferParameter};
     use crate::scsi::{Cdb, Scsi};
 
     fn read_command(sectors: u32) -> Scsi {
@@ -286,5 +347,49 @@ mod tests {
             )),
         };
         assert_eq!(device.allocate(&bytes).unwrap().len(), 777);
+    }
+
+    #[test]
+    fn display_highlights_key_asc_and_ascq_in_fixed_format_sense() {
+        let mut sense = [0; 32];
+        sense[0] = 0xf0;
+        sense[2] = 0x05;
+        sense[12] = 0x20;
+        sense[13] = 0x00;
+
+        let error = SgIoError {
+            kind: SgIoErrorKind::ScsiError {
+                status: 2,
+                host_status: 0,
+                driver_status: 0,
+                sense,
+            },
+        };
+
+        assert!(error
+            .to_string()
+            .contains("sense=F0 00 [05] 00 00 00 00 00 00 00 00 00 [20] [00]"));
+    }
+
+    #[test]
+    fn display_highlights_key_asc_and_ascq_in_descriptor_format_sense() {
+        let mut sense = [0; 32];
+        sense[0] = 0x72;
+        sense[1] = 0x06;
+        sense[2] = 0x29;
+        sense[3] = 0x00;
+
+        let error = SgIoError {
+            kind: SgIoErrorKind::ScsiError {
+                status: 2,
+                host_status: 0,
+                driver_status: 0,
+                sense,
+            },
+        };
+
+        assert!(error
+            .to_string()
+            .contains("sense=72 [06] [29] [00]"));
     }
 }
