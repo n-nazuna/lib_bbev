@@ -1,24 +1,7 @@
+use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
 use crate::scsi::{Cdb, Scsi};
 use std::fmt;
 use std::io;
-
-#[derive(Copy, Clone)]
-pub enum XferDirection {
-    TargetToInitiator(XferLength),
-    InitiatorToTarget(XferLength),
-}
-#[derive(Copy, Clone)]
-pub enum XferParameter {
-    XferDirection(XferDirection),
-    NoDataTransfer,
-}
-
-#[derive(Copy, Clone)]
-pub enum XferLength {
-    Sectors(u32),
-    Pages(u32),
-    Bytes(usize),
-}
 
 pub struct Device {
     fd: i32,
@@ -94,7 +77,10 @@ impl fmt::Display for SgIoError {
                     "transfer length mismatch: expected={expected} bytes, actual={actual} bytes"
                 )
             }
-            SgIoErrorKind::UnexpectedResidual { requested, residual } => {
+            SgIoErrorKind::UnexpectedResidual {
+                requested,
+                residual,
+            } => {
                 write!(
                     f,
                     "incomplete or invalid transfer: requested={requested} bytes, residual={residual} bytes"
@@ -149,7 +135,7 @@ const SG_IO: libc::c_ulong = 0x2285;
 const SG_DXFER_NONE: i32 = -1;
 const SG_DXFER_TO_DEV: i32 = -2;
 const SG_DXFER_FROM_DEV: i32 = -3;
-const DEFAULT_TIMEOUT_MILLIS: u32 = 1200_000_000;
+const DEFAULT_TIMEOUT_MILLIS: u32 = 1_200_000_000;
 
 fn check_completion(hdr: &SgIoHdr, sense: [u8; 32]) -> Result<(), SgIoError> {
     if hdr.status != 0 || hdr.host_status != 0 || hdr.driver_status != 0 {
@@ -313,7 +299,8 @@ impl Device {
 
 #[cfg(test)]
 mod tests {
-    use super::{Device, SgIoError, SgIoErrorKind, XferDirection, XferLength, XferParameter};
+    use super::{Device, SgIoError, SgIoErrorKind};
+    use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
     use crate::scsi::{Cdb, Scsi};
 
     fn read_command(sectors: u32) -> Scsi {
@@ -395,9 +382,11 @@ mod tests {
             },
         };
 
-        assert!(error
-            .to_string()
-            .contains("sense=F0 00 [05] 00 00 00 00 00 00 00 00 00 [20] [00]"));
+        assert!(
+            error
+                .to_string()
+                .contains("sense=F0 00 [05] 00 00 00 00 00 00 00 00 00 [20] [00]")
+        );
     }
 
     #[test]
@@ -417,9 +406,6 @@ mod tests {
             },
         };
 
-        assert!(error
-            .to_string()
-            .contains("sense=72 [06] [29] [00]"));
+        assert!(error.to_string().contains("sense=72 [06] [29] [00]"));
     }
 }
-

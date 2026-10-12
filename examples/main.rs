@@ -1,5 +1,6 @@
+use lib_bbev::blk_cmd::XferLength;
 use lib_bbev::sg_io::Device;
-use lib_bbev::{ata, scsi};
+use lib_bbev::{ata, sat};
 use std::env;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
@@ -19,8 +20,11 @@ fn main() {
 
     let fd = file.as_raw_fd();
     let dev = Device::new(fd, 512, 1024);
-    let cmd = ata::Gpl::new().page_count(1).address(0x0).read_log_dma_ext();
-    let cdb = scsi::AtaPt::new(cmd).cdb16();
+    let cmd = ata::Ata::builder()
+        .command(ata::AtaCmd::ReadLogDmaExt)
+        .count(1)
+        .dma_data_in(XferLength::Pages(1));
+    let cdb = sat::AtaPt::new(cmd).cdb16();
 
     let mut buf = dev.allocate(&cdb).expect("Failed to allocate buffer");
 

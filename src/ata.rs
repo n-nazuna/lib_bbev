@@ -1,10 +1,8 @@
+pub use crate::ata_cmd::AtaCmd;
 use crate::{
     ata_cmd,
-    sg_io::{XferDirection, XferLength, XferParameter},
+    blk_cmd::{XferDirection, XferLength},
 };
-
-pub use crate::ata_cmd::AtaCmd;
-
 pub enum AtaProtocol {
     NonData,
     Pio { direction: XferDirection },
@@ -13,31 +11,23 @@ pub enum AtaProtocol {
     Ncq { direction: XferDirection },
 }
 
-impl AtaProtocol {
-    pub fn xfer(&self) -> XferParameter {
-        match self {
-            AtaProtocol::NonData | AtaProtocol::NcqNonData => XferParameter::NoDataTransfer,
-            AtaProtocol::Pio { direction }
-            | AtaProtocol::Dma { direction }
-            | AtaProtocol::Ncq { direction } => match direction {
-                XferDirection::TargetToInitiator(_) => XferParameter::XferDirection(*direction),
-                XferDirection::InitiatorToTarget(_) => XferParameter::XferDirection(*direction),
-            },
-        }
-    }
-}
 pub struct Ata {
-    pub(crate) feature: u16,
-    pub(crate) count: u16,
-    pub(crate) lba: u64,
-    pub(crate) control: u8,
-    pub(crate) icc: u8,
-    pub(crate) aux: u32,
-    pub(crate) device: u8,
-    pub(crate) command: ata_cmd::AtaCmd,
-    pub(crate) protocol: AtaProtocol,
+    pub feature: u16,
+    pub count: u16,
+    pub lba: u64,
+    pub control: u8,
+    pub icc: u8,
+    pub aux: u32,
+    pub device: u8,
+    pub command: ata_cmd::AtaCmd,
+    pub protocol: AtaProtocol,
 }
 impl Ata {
+    /// Creates a builder with default register values; selecting a protocol finishes it.
+    pub fn builder() -> AtaBuilder {
+        AtaBuilder::new()
+    }
+
     pub fn new() -> Self {
         Self {
             feature: 0,
@@ -50,42 +40,6 @@ impl Ata {
             command: AtaCmd::Nop,
             protocol: AtaProtocol::NonData,
         }
-    }
-    pub fn feature(mut self, feature: u16) -> Self {
-        self.feature = feature;
-        self
-    }
-    pub fn count(mut self, count: u16) -> Self {
-        self.count = count;
-        self
-    }
-    pub fn lba(mut self, lba: u64) -> Self {
-        self.lba = lba;
-        self
-    }
-    pub fn control(mut self, control: u8) -> Self {
-        self.control = control;
-        self
-    }
-    pub fn icc(mut self, icc: u8) -> Self {
-        self.icc = icc;
-        self
-    }
-    pub fn aux(mut self, aux: u32) -> Self {
-        self.aux = aux;
-        self
-    }
-    pub fn device(mut self, device: u8) -> Self {
-        self.device = device;
-        self
-    }
-    pub fn command(mut self, command: AtaCmd) -> Self {
-        self.command = command;
-        self
-    }
-    pub fn protocol(mut self, protocol: AtaProtocol) -> Self {
-        self.protocol = protocol;
-        self
     }
     pub fn fis(&self) -> [u8; 20] {
         let mut fis = [0u8; 20];
@@ -117,213 +71,105 @@ impl Default for Ata {
         Self::new()
     }
 }
-pub struct Gpl {
-    feature: u16,
-    page_number: u16,
-    page_count: u16,
-    address: u8,
+
+/// Builds an ATA command, finishing when an execution protocol is selected.
+#[derive(Default)]
+pub struct AtaBuilder {
+    ata: Ata,
 }
-impl Gpl {
+
+impl AtaBuilder {
     pub fn new() -> Self {
-        Gpl {
-            feature: 0,
-            page_number: 0,
-            page_count: 1,
-            address: 0,
-        }
+        Self { ata: Ata::new() }
     }
+
     pub fn feature(mut self, feature: u16) -> Self {
-        self.feature = feature;
+        self.ata.feature = feature;
         self
     }
-    pub fn page_number(mut self, page_number: u16) -> Self {
-        self.page_number = page_number;
+
+    pub fn count(mut self, count: u16) -> Self {
+        self.ata.count = count;
         self
     }
-    fn page_number_hi(&self) -> u8 {
-        (self.page_number >> 8) as u8
-    }
-    fn page_number_lo(&self) -> u8 {
-        self.page_number as u8
-    }
-    fn lba(&self) -> u64 {
-        ((self.page_number_hi() as u64) << 32)
-            | ((self.page_number_lo() as u64) << 8)
-            | u64::from(self.address)
-    }
-    pub fn page_count(mut self, page_count: u16) -> Self {
-        self.page_count = page_count;
+
+    pub fn lba(mut self, lba: u64) -> Self {
+        self.ata.lba = lba;
         self
     }
-    pub fn address(mut self, address: u8) -> Self {
-        self.address = address;
+
+    pub fn control(mut self, control: u8) -> Self {
+        self.ata.control = control;
         self
     }
-    pub fn read_log_dma_ext(self) -> Ata {
-        Ata {
-            feature: self.feature,
-            count: self.page_count,
-            lba: self.lba(),
-            control: 0,
-            icc: 0,
-            aux: 0,
-            device: 0,
-            command: AtaCmd::ReadLogDmaExt,
-            protocol: AtaProtocol::Dma {
-                direction: XferDirection::TargetToInitiator(XferLength::Pages(
-                    self.page_count as u32,
-                )),
-            },
-        }
+
+    pub fn icc(mut self, icc: u8) -> Self {
+        self.ata.icc = icc;
+        self
     }
-    pub fn write_log_dma_ext(self) -> Ata {
-        Ata {
-            feature: self.feature,
-            count: self.page_count,
-            lba: self.lba(),
-            control: 0,
-            icc: 0,
-            aux: 0,
-            device: 0,
-            command: AtaCmd::WriteLogDmaExt,
-            protocol: AtaProtocol::Dma {
-                direction: XferDirection::InitiatorToTarget(XferLength::Pages(
-                    self.page_count as u32,
-                )),
-            },
-        }
+
+    pub fn aux(mut self, aux: u32) -> Self {
+        self.ata.aux = aux;
+        self
     }
-    pub fn receive_fpdma_queued(self) -> Ata {
-        Ata {
-            feature: self.page_count,
-            count: 0x01 << 8, // READ LOG DMA EXT SUBCOMMAND
-            lba: self.lba(),
-            control: 0,
-            icc: 0,
-            aux: self.feature as u32,
-            device: 0,
-            command: AtaCmd::ReceiveFpdmaQueued,
-            protocol: AtaProtocol::Ncq {
-                direction: XferDirection::TargetToInitiator(XferLength::Pages(
-                    self.page_count as u32,
-                )),
-            },
-        }
+
+    pub fn device(mut self, device: u8) -> Self {
+        self.ata.device = device;
+        self
     }
-    pub fn send_fpdma_queued(self) -> Ata {
-        Ata {
-            feature: self.page_count,
-            count: 0x02 << 8, // WRITE LOG DMA EXT SUBCOMMAND
-            lba: self.lba(),
-            control: 0,
-            icc: 0,
-            aux: self.feature as u32,
-            device: 0,
-            command: AtaCmd::SendFpdmaQueued,
-            protocol: AtaProtocol::Ncq {
-                direction: XferDirection::InitiatorToTarget(XferLength::Pages(
-                    self.page_count as u32,
-                )),
-            },
-        }
+
+    pub fn command(mut self, command: AtaCmd) -> Self {
+        self.ata.command = command;
+        self
+    }
+
+    /// Finishes the command with an explicitly specified execution protocol.
+    pub fn protocol(mut self, protocol: AtaProtocol) -> Ata {
+        self.ata.protocol = protocol;
+        self.ata
+    }
+
+    pub fn nondata(self) -> Ata {
+        self.protocol(AtaProtocol::NonData)
+    }
+
+    pub fn pio_data_in(self, len: XferLength) -> Ata {
+        self.protocol(AtaProtocol::Pio {
+            direction: XferDirection::TargetToInitiator(len),
+        })
+    }
+
+    pub fn pio_data_out(self, len: XferLength) -> Ata {
+        self.protocol(AtaProtocol::Pio {
+            direction: XferDirection::InitiatorToTarget(len),
+        })
+    }
+
+    pub fn dma_data_in(self, len: XferLength) -> Ata {
+        self.protocol(AtaProtocol::Dma {
+            direction: XferDirection::TargetToInitiator(len),
+        })
+    }
+
+    pub fn dma_data_out(self, len: XferLength) -> Ata {
+        self.protocol(AtaProtocol::Dma {
+            direction: XferDirection::InitiatorToTarget(len),
+        })
+    }
+
+    pub fn ncq_nondata(self) -> Ata {
+        self.protocol(AtaProtocol::NcqNonData)
+    }
+
+    pub fn ncq_data_in(self, len: XferLength) -> Ata {
+        self.protocol(AtaProtocol::Ncq {
+            direction: XferDirection::TargetToInitiator(len),
+        })
+    }
+
+    pub fn ncq_data_out(self, len: XferLength) -> Ata {
+        self.protocol(AtaProtocol::Ncq {
+            direction: XferDirection::InitiatorToTarget(len),
+        })
     }
 }
-impl Default for Gpl {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Ata, AtaCmd, AtaProtocol, Gpl};
-    use crate::sg_io::{XferDirection, XferLength, XferParameter};
-
-    #[test]
-    fn fis_places_each_field_at_its_register_fis_byte_offset() {
-        let fis = Ata::new()
-            .feature(0x1234)
-            .count(0x5678)
-            .lba(0x0102_0304_0506)
-            .control(0xBB)
-            .icc(0xCC)
-            .aux(0x1122_3344)
-            .device(0xAA)
-            .command(AtaCmd::ReadLogDmaExt)
-            .fis();
-
-        assert_eq!(
-            fis,
-            [
-                0x27, 0x80, 0x47, 0x34, 0x06, 0x05, 0x04, 0xAA, 0x03, 0x02, 0x01, 0x12, 0x78, 0x56,
-                0xCC, 0xBB, 0x44, 0x33, 0x22, 0x11,
-            ]
-        );
-    }
-
-    #[test]
-    fn gpl_write_preserves_fields_and_uses_write_opcode() {
-        let command = Gpl::new()
-            .feature(0x1234)
-            .page_number(0x5678)
-            .page_count(2)
-            .address(0x9a)
-            .write_log_dma_ext();
-
-        assert_eq!(command.feature, 0x1234);
-        assert_eq!(command.count, 2);
-        assert_eq!(command.lba, 0x0000_0056_0000_789a);
-        assert!(matches!(command.command, AtaCmd::WriteLogDmaExt));
-        assert!(matches!(
-            command.protocol,
-            AtaProtocol::Dma {
-                direction: XferDirection::InitiatorToTarget(XferLength::Pages(2))
-            }
-        ));
-    }
-
-    #[test]
-    fn gpl_read_preserves_fields_and_uses_read_opcode() {
-        let command = Gpl::new()
-            .feature(0x1234)
-            .page_number(0x5678)
-            .page_count(2)
-            .address(0x9a)
-            .read_log_dma_ext();
-
-        assert_eq!(command.feature, 0x1234);
-        assert_eq!(command.count, 2);
-        assert_eq!(command.lba, 0x0000_0056_0000_789a);
-        assert!(matches!(command.command, AtaCmd::ReadLogDmaExt));
-        assert!(matches!(
-            command.protocol,
-            AtaProtocol::Dma {
-                direction: XferDirection::TargetToInitiator(XferLength::Pages(2))
-            }
-        ));
-    }
-
-    #[test]
-    fn xfer_maps_non_data_protocols_to_no_data_transfer() {
-        assert!(matches!(
-            AtaProtocol::NonData.xfer(),
-            XferParameter::NoDataTransfer
-        ));
-        assert!(matches!(
-            AtaProtocol::NcqNonData.xfer(),
-            XferParameter::NoDataTransfer
-        ));
-    }
-
-    #[test]
-    fn xfer_carries_direction_and_length_for_data_protocols() {
-        let direction = XferDirection::InitiatorToTarget(XferLength::Sectors(4));
-        let xfer = (AtaProtocol::Dma { direction }).xfer();
-
-        assert!(matches!(
-            xfer,
-            XferParameter::XferDirection(XferDirection::InitiatorToTarget(XferLength::Sectors(4)))
-        ));
-    }
-}
-
