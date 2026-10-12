@@ -250,3 +250,42 @@ CK_COND=1 で PIO Data-In または NCQ の場合、descriptor形式ではbyte 3
 DESCRIPTOR CODE=`0x09`、ADDITIONAL DESCRIPTOR LENGTH=`0x0C`。
 ERROR、COUNT、LBA、DEVICE、STATUS を返す。
 (12) または EXTEND=0 の (16)/(32) は28bit形式、EXTEND=1 の (16)/(32) は48bit形式。
+
+| Bytes | Field name | Value |
+| ---: | --- | --- |
+| 0 | DESCRIPTOR CODE | `0x09` |
+| 1 | ADDITIONAL DESCRIPTOR LENGTH | `0x0C` |
+| 2 | Reserved / EXTEND | bit 7:1は0、bit 0はEXTEND |
+| 3 | ERROR | ATA ERROR |
+| 4 | COUNT [15:8] | EXTEND=0では0 |
+| 5 | COUNT [7:0] | ATA COUNT [7:0] |
+| 6 | LBA [31:24] | EXTEND=0ではbit 7:4を0にする |
+| 7 | LBA [7:0] | ATA LBA [7:0] |
+| 8 | LBA [39:32] | EXTEND=0では0 |
+| 9 | LBA [15:8] | ATA LBA [15:8] |
+| 10 | LBA [47:40] | EXTEND=0では0 |
+| 11 | LBA [23:16] | ATA LBA [23:16] |
+| 12 | DEVICE | ATA DEVICE |
+| 13 | STATUS | ATA STATUS |
+
+<a id="sat-fixed-sense"></a>
+
+## 9 Fixed format sense data
+
+以下のBytesは各フィールド内の位置。VALIDは規定されていない。
+
+| Bytes | Field name | Value |
+| ---: | --- | --- |
+| 0 | INFORMATION: ERROR | ATA ERROR |
+| 1 | INFORMATION: STATUS | ATA STATUS |
+| 2 | INFORMATION: DEVICE | ATA DEVICE |
+| 3 | INFORMATION: COUNT [7:0] | ATA COUNT [7:0] |
+| 0 | COMMAND-SPECIFIC INFORMATION: flags | bit 7=EXTEND、6=COUNT UPPER NONZERO、5=LBA UPPER NONZERO、4=Reserved、3:0=LOG INDEX |
+| 1 | COMMAND-SPECIFIC INFORMATION: LBA [7:0] | ATA LBA [7:0] |
+| 2 | COMMAND-SPECIFIC INFORMATION: LBA [15:8] | ATA LBA [15:8] |
+| 3 | COMMAND-SPECIFIC INFORMATION: LBA [23:16] | ATA LBA [23:16] |
+
+EXTEND=1ではCOUNT [15:8]とLBA [47:24]を返せない。
+COUNT UPPER NONZEROとLBA UPPER NONZEROは、それぞれ返せない上位値が0以外かを示す。
+LOG INDEXが0以外ならdescriptor形式のsenseがATA PASS-THROUGH Results logに保存されており、
+対応するPARAMETER CODEはLOG INDEX−1。

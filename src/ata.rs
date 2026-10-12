@@ -173,3 +173,14 @@ impl CommandBuilder {
         })
     }
 }
+
+pub struct Register {
+    pub count: u16,
+    pub lba: u64,
+    pub device: u8,
+}
+pub struct Response {
+    pub status: u8,
+    pub error: u8,
+    pub register: Option<Register>,
+}

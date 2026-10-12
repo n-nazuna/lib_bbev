@@ -1,6 +1,9 @@
-use crate::ata::{AtaProtocol, Command as AtaCommand};
+use crate::ata::{AtaProtocol, Command as AtaCommand, Register, Response as AtaResponse};
 use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
-use crate::scsi::{Cdb, Command as ScsiCommand};
+use crate::scsi::{
+    Cdb, Command as ScsiCommand, DescriptorSense, FixedSense, Response as ScsiResponse, SenseData,
+    Status,
+};
 pub struct AtaPt {
     ata_cmd: AtaCommand,
 }
@@ -150,4 +153,108 @@ impl AtaPt {
             xfer: self.xfer(),
         }
     }
+
+    /// Extracts the current command's ATA completion fields from SAT-4 sense data.
+    /// Returns None when ATA fields are absent, malformed, deferred, or suppressed.
+    /// Fixed-format responses with nonzero upper COUNT/LBA values have no Register.
+    pub fn response(&self, response: &ScsiResponse) -> Option<AtaResponse> {
+        if !matches!(response.status, Status::CheckCondition) {
+            return None;
+        }
+        let sense = response.sense_data.as_ref()?;
+        let (key, asc, ascq) = match sense {
+            SenseData::CurrentFixed(sense) => (
+                sense.sense_key,
+                sense.additional_sense_code,
+                sense.additional_sense_qualifier,
+            ),
+            SenseData::CurrentDescriptor(sense) => (
+                sense.sense_key,
+                sense.additional_sense_code,
+                sense.additional_sense_qualifier,
+            ),
+            SenseData::DeferredFixed(_) | SenseData::DeferredDescriptor(_) => return None,
+        };
+        // SAT-4: CK_COND completion information for PIO Data-In / NCQ is zeroed.
+        if matches!(self.code(), 0x04 | 0x0c) && (key, asc, ascq) == (0x01, 0x00, 0x1d) {
+            return None;
+        }
+        match sense {
+            SenseData::CurrentFixed(sense) => fixed_response(sense),
+            SenseData::CurrentDescriptor(sense) => descriptor_response(sense),
+            SenseData::DeferredFixed(_) | SenseData::DeferredDescriptor(_) => None,
+        }
+    }
+}
+
+fn fixed_response(sense: &FixedSense) -> Option<AtaResponse> {
+    // Bytes 8..11 (COMMAND-SPECIFIC INFORMATION) must be present.
+    if sense.additional_sense_length < 4 {
+        return None;
+    }
+    let [error, status, device, count] = sense.information;
+    let [flags, lba_low, lba_mid, lba_high] = sense.command_specific_information;
+    let extend = flags & 0x80 != 0;
+    let mut lba = u64::from(lba_low) | (u64::from(lba_mid) << 8) | (u64::from(lba_high) << 16);
+    if !extend {
+        lba |= u64::from(device & 0x0f) << 24;
+    }
+    // Upper bytes are unavailable; NONZERO flags tell us whether zero-extension is safe.
+    let register = if extend && flags & 0x60 != 0 {
+        None
+    } else {
+        Some(Register {
+            count: u16::from(count),
+            lba,
+            device,
+        })
+    };
+    Some(AtaResponse {
+        status,
+        error,
+        register,
+    })
+}
+
+fn descriptor_response(sense: &DescriptorSense) -> Option<AtaResponse> {
+    // The Vec starts at sense byte 8. Limit parsing to the advertised additional length.
+    let length = usize::from(sense.additional_sense_length).min(sense.sense_data_descriptor.len());
+    let mut descriptors = &sense.sense_data_descriptor[..length];
+    while !descriptors.is_empty() {
+        let header = descriptors.get(..2)?;
+        let length = usize::from(header[1]) + 2;
+        let descriptor = descriptors.get(..length)?;
+        if header[0] == 0x09 {
+            if header[1] != 0x0c {
+                return None;
+            }
+            let extend = descriptor[2] & 1 != 0;
+            let count = if extend {
+                u16::from_be_bytes([descriptor[4], descriptor[5]])
+            } else {
+                u16::from(descriptor[5])
+            };
+            let lba_upper = if extend {
+                (u64::from(descriptor[10]) << 40)
+                    | (u64::from(descriptor[8]) << 32)
+                    | (u64::from(descriptor[6]) << 24)
+            } else {
+                u64::from(descriptor[6] & 0x0f) << 24
+            };
+            return Some(AtaResponse {
+                status: descriptor[13],
+                error: descriptor[3],
+                register: Some(Register {
+                    count,
+                    lba: lba_upper
+                        | (u64::from(descriptor[11]) << 16)
+                        | (u64::from(descriptor[9]) << 8)
+                        | u64::from(descriptor[7]),
+                    device: descriptor[12],
+                }),
+            });
+        }
+        descriptors = &descriptors[length..];
+    }
+    None
 }
