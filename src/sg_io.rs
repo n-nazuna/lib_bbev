@@ -316,6 +316,70 @@ mod tests {
     use super::{Device, SgIoError, SgIoErrorKind, XferDirection, XferLength, XferParameter};
     use crate::scsi::{Cdb, Scsi};
 
+    fn completion_header(requested: u32, residual: i32) -> super::SgIoHdr {
+        super::SgIoHdr {
+            interface_id: b'S' as i32,
+            dxfer_direction: super::SG_DXFER_FROM_DEV,
+            cmd_len: 16,
+            mx_sb_len: 32,
+            iovec_count: 0,
+            dxfer_len: requested,
+            dxferp: std::ptr::null_mut(),
+            cmdp: std::ptr::null(),
+            sbp: std::ptr::null_mut(),
+            timeout: 1000,
+            flags: 0,
+            pack_id: 0,
+            usr_ptr: std::ptr::null_mut(),
+            status: 0,
+            masked_status: 0,
+            msg_status: 0,
+            sb_len_wr: 0,
+            host_status: 0,
+            driver_status: 0,
+            resid: residual,
+            duration: 0,
+            info: 0,
+        }
+    }
+
+    #[test]
+    fn exact_completion_accepts_full_and_no_data_transfers() {
+        for requested in [0, 512, 4096] {
+            assert!(super::check_completion(&completion_header(requested, 0), [0; 32]).is_ok());
+        }
+    }
+
+    #[test]
+    fn good_status_does_not_hide_short_or_invalid_transfers() {
+        for residual in [1, 512, 4096, 4097, -1, i32::MIN, i32::MAX] {
+            let error = super::check_completion(&completion_header(4096, residual), [0; 32])
+                .unwrap_err();
+            assert!(matches!(error.kind, SgIoErrorKind::UnexpectedResidual {
+                requested: 4096, residual: value,
+            } if value == residual));
+            assert!(error.to_string().contains(&format!("residual={residual}")));
+        }
+    }
+
+    #[test]
+    fn completion_preserves_scsi_and_transport_errors_before_residuals() {
+        for (status, host_status, driver_status) in [(2, 0, 0), (0, 1, 0), (0, 0, 8)] {
+            let mut hdr = completion_header(4096, 512);
+            hdr.status = status;
+            hdr.host_status = host_status;
+            hdr.driver_status = driver_status;
+            let mut sense = [0; 32];
+            sense[0] = 0x72;
+            sense[1] = 0x05;
+            sense[2] = 0x24;
+            let error = super::check_completion(&hdr, sense).unwrap_err();
+            assert!(matches!(error.kind, SgIoErrorKind::ScsiError {
+                status: s, host_status: h, driver_status: d, sense: actual_sense,
+            } if s == status && h == host_status && d == driver_status && actual_sense == sense));
+        }
+    }
+
     fn read_command(sectors: u32) -> Scsi {
         Scsi {
             cdb: Cdb::Cdb16([0; 16]),
