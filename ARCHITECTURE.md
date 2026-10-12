@@ -50,33 +50,32 @@ protocol 選択メソッドが完成した `ata::Command` を返す。公開の 
 ## I/O の境界
 
 ATA / SCSI はコマンド情報と形式変換を提供し、I/O engine が必要な情報を取り出して送信する。
-送信 API・バッファ管理・エラー型は各 I/O engine が決める。
+ATA I/O engine は ATA コマンドを、SCSI I/O engine は SCSI コマンドを扱い、それぞれの応答を返す。
+送信 API・バッファ管理・転送の検証・送信エラーの扱いは各 I/O engine が決める。
 
-| コマンド | I/O engine が取り出す情報 |
-| --- | --- |
-| `scsi::Command` | `command.cdb.as_bytes()` の CDB バイト列、`command.xfer` の方向・長さ |
-| `ata::Command` | 公開フィールドのレジスタ値、`command.protocol` の protocol・方向・長さ、`command.fis()` の H2D FIS |
+| I/O engine | 入力 | 送信に使う情報 | 応答 |
+| --- | --- | --- | --- |
+| ATA I/O engine | ATA コマンド | レジスタ値または FIS、protocol、転送方向・長さ | ATA 応答 |
+| SCSI I/O engine | SCSI コマンド | CDB、転送方向・長さ | SCSI 応答 |
 
 ```mermaid
 flowchart LR
-    gpl["GPL / ATA builder"] --> ata["ata::Command"]
-    ata -->|公開フィールド / protocol / fis| direct["独自 ATA I/O engine"]
-    direct --> native_response["ata::Response"]
-    ata --> sat["scsi::sat::AtaPt"]
-    sat --> scsi["scsi::Command"]
-    scsi -->|cdb.as_bytes / xfer| sg["sg_io::Device"]
-    scsi -->|cdb.as_bytes / xfer| custom["独自 SCSI I/O engine"]
-    sg --> response["scsi::Response"]
-    custom --> response
-    response --> convert["AtaPt::response()"]
-    convert --> ata_response["Option&lt;ata::Response&gt;"]
+    ata["ATA コマンド"] --> ata_engine["ATA I/O engine"]
+    ata_engine --> ata_response["ATA 応答"]
+    scsi["SCSI コマンド"] --> scsi_engine["SCSI I/O engine"]
+    scsi_engine --> scsi_response["SCSI 応答"]
+    ata --> sat_command["SAT コマンド変換"]
+    sat_command --> scsi
+    scsi_response --> sat_response["SAT 応答変換"]
+    sat_response -->|ATA 情報を取得できる場合| ata_response
 ```
 
-ATA engine はレジスタ値を直接使うか、FIS を生成して使う。
-SCSI engine は CDB と転送情報を使う。
-SAT 経由の ATA 情報取得は呼び出し側が行う。GOOD 応答では ATA の完了レジスタが返らないため、
-変換結果は `Option<ata::Response>` のまま扱う。
-バッファは呼び出し側が所有する。`Device::allocate()` は SG_IO の補助 API。
+SAT は ATA と SCSI のコマンド・応答を変換する。呼び出し側は SAT を使い、
+ATA コマンドを SCSI I/O engine に渡し、SCSI 応答から取得できる ATA 情報を取り出せる。
+バッファは呼び出し側が所有し、I/O engine に渡す。
+
+現在の `sg_io` は SCSI I/O engine の実装に当たる。
+ATA / SCSI のコマンド・応答の型と SAT は、特定の I/O engine に依存しない。
 
 ## コマンドとデータの流れ
 
@@ -167,4 +166,4 @@ Deferred や ATA 情報のない応答、不完全なデータ、完了値が抑
 - `ata::Command` のレジスタ値と `protocol` フィールドは `pub` で、外部ドライバから参照できる。
 - `Cdb::as_bytes()` は公開されており、外部ドライバから CDB のバイト列を参照できる。
 - `sg_io` が `scsi::Response` を生成し、SAT への受け渡しは example 側が担当する。送信失敗時の生の sense は `TransportError` に残す。
-- 独自 I/O engine は ATA / SCSI の型と変換 API を使って実装でき、`sg_io` への依存は不要。
+- ATA / SCSI I/O engine はそれぞれのコマンド・応答の型を使って実装でき、`sg_io` への依存は不要。
