@@ -1,4 +1,5 @@
 pub mod ata_cmd;
+pub mod gpl;
 use crate::blk_cmd::{XferDirection, XferLength};
 pub use ata_cmd::AtaCmd;
 pub enum AtaProtocol {
