@@ -1,6 +1,6 @@
 pub mod ata_cmd;
-pub use ata_cmd::AtaCmd;
 use crate::blk_cmd::{XferDirection, XferLength};
+pub use ata_cmd::AtaCmd;
 pub enum AtaProtocol {
     NonData,
     Pio { direction: XferDirection },
@@ -121,52 +121,51 @@ impl AtaBuilder {
         self
     }
 
-    /// Finishes the command with an explicitly specified execution protocol.
-    pub fn protocol(mut self, protocol: AtaProtocol) -> Ata {
+    fn build(mut self, protocol: AtaProtocol) -> Ata {
         self.ata.protocol = protocol;
         self.ata
     }
 
     pub fn nondata(self) -> Ata {
-        self.protocol(AtaProtocol::NonData)
+        self.build(AtaProtocol::NonData)
     }
 
     pub fn pio_data_in(self, len: XferLength) -> Ata {
-        self.protocol(AtaProtocol::Pio {
+        self.build(AtaProtocol::Pio {
             direction: XferDirection::TargetToInitiator(len),
         })
     }
 
     pub fn pio_data_out(self, len: XferLength) -> Ata {
-        self.protocol(AtaProtocol::Pio {
+        self.build(AtaProtocol::Pio {
             direction: XferDirection::InitiatorToTarget(len),
         })
     }
 
     pub fn dma_data_in(self, len: XferLength) -> Ata {
-        self.protocol(AtaProtocol::Dma {
+        self.build(AtaProtocol::Dma {
             direction: XferDirection::TargetToInitiator(len),
         })
     }
 
     pub fn dma_data_out(self, len: XferLength) -> Ata {
-        self.protocol(AtaProtocol::Dma {
+        self.build(AtaProtocol::Dma {
             direction: XferDirection::InitiatorToTarget(len),
         })
     }
 
     pub fn ncq_nondata(self) -> Ata {
-        self.protocol(AtaProtocol::NcqNonData)
+        self.build(AtaProtocol::NcqNonData)
     }
 
     pub fn ncq_data_in(self, len: XferLength) -> Ata {
-        self.protocol(AtaProtocol::Ncq {
+        self.build(AtaProtocol::Ncq {
             direction: XferDirection::TargetToInitiator(len),
         })
     }
 
     pub fn ncq_data_out(self, len: XferLength) -> Ata {
-        self.protocol(AtaProtocol::Ncq {
+        self.build(AtaProtocol::Ncq {
             direction: XferDirection::InitiatorToTarget(len),
         })
     }
