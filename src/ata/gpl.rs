@@ -1,6 +1,6 @@
 //! General Purpose Logging (GPL) command construction.
 
-use super::{Ata, AtaCmd};
+use super::{Command, CommandCode};
 use crate::blk_cmd::XferLength;
 
 pub struct Gpl {
@@ -64,41 +64,41 @@ impl GplBuilder {
         self
     }
 
-    pub fn read_log_dma_ext(self) -> Ata {
-        Ata::builder()
+    pub fn read_log_dma_ext(self) -> Command {
+        Command::builder()
             .feature(self.gpl.feature)
             .count(self.gpl.page_count)
             .lba(self.gpl.lba())
-            .command(AtaCmd::ReadLogDmaExt)
+            .command(CommandCode::ReadLogDmaExt)
             .dma_data_in(XferLength::Pages(u32::from(self.gpl.page_count)))
     }
 
-    pub fn write_log_dma_ext(self) -> Ata {
-        Ata::builder()
+    pub fn write_log_dma_ext(self) -> Command {
+        Command::builder()
             .count(self.gpl.page_count)
             .lba(self.gpl.lba())
-            .command(AtaCmd::WriteLogDmaExt)
+            .command(CommandCode::WriteLogDmaExt)
             .dma_data_out(XferLength::Pages(u32::from(self.gpl.page_count)))
     }
 
-    pub fn receive_fpdma_queued(self) -> Ata {
-        Ata::builder()
+    pub fn receive_fpdma_queued(self) -> Command {
+        Command::builder()
             .feature(self.gpl.page_count)
             .count(0x01 << 8) // READ LOG DMA EXT SUBCOMMAND
             .lba(self.gpl.lba())
             .aux(u32::from(self.gpl.feature))
             .device(0x40)
-            .command(AtaCmd::ReceiveFpdmaQueued)
+            .command(CommandCode::ReceiveFpdmaQueued)
             .ncq_data_in(XferLength::Pages(u32::from(self.gpl.page_count)))
     }
 
-    pub fn send_fpdma_queued(self) -> Ata {
-        Ata::builder()
+    pub fn send_fpdma_queued(self) -> Command {
+        Command::builder()
             .feature(self.gpl.page_count)
             .count(0x02 << 8) // WRITE LOG DMA EXT SUBCOMMAND
             .lba(self.gpl.lba())
             .device(0x40)
-            .command(AtaCmd::SendFpdmaQueued)
+            .command(CommandCode::SendFpdmaQueued)
             .ncq_data_out(XferLength::Pages(u32::from(self.gpl.page_count)))
     }
 }

@@ -9,7 +9,7 @@ pub enum Cdb {
     Cdb10([u8; 10]),
     Cdb6([u8; 6]),
 }
-pub struct Scsi {
+pub struct Command {
     pub cdb: Cdb,
     pub xfer: XferParameter,
 }

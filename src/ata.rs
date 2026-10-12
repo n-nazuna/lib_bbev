@@ -1,7 +1,7 @@
-pub mod ata_cmd;
+pub mod command_code;
 pub mod gpl;
 use crate::blk_cmd::{XferDirection, XferLength};
-pub use ata_cmd::AtaCmd;
+pub use command_code::CommandCode;
 pub enum AtaProtocol {
     NonData,
     Pio { direction: XferDirection },
@@ -10,7 +10,7 @@ pub enum AtaProtocol {
     Ncq { direction: XferDirection },
 }
 
-pub struct Ata {
+pub struct Command {
     pub feature: u16,
     pub count: u16,
     pub lba: u64,
@@ -18,13 +18,13 @@ pub struct Ata {
     pub icc: u8,
     pub aux: u32,
     pub device: u8,
-    pub command: ata_cmd::AtaCmd,
+    pub command: command_code::CommandCode,
     pub protocol: AtaProtocol,
 }
-impl Ata {
+impl Command {
     /// Creates a builder with default register values; selecting a protocol finishes it.
-    pub fn builder() -> AtaBuilder {
-        AtaBuilder::new()
+    pub fn builder() -> CommandBuilder {
+        CommandBuilder::new()
     }
 
     pub fn new() -> Self {
@@ -36,7 +36,7 @@ impl Ata {
             icc: 0,
             aux: 0,
             device: 0,
-            command: AtaCmd::Nop,
+            command: CommandCode::Nop,
             protocol: AtaProtocol::NonData,
         }
     }
@@ -65,7 +65,7 @@ impl Ata {
         fis
     }
 }
-impl Default for Ata {
+impl Default for Command {
     fn default() -> Self {
         Self::new()
     }
@@ -73,13 +73,15 @@ impl Default for Ata {
 
 /// Builds an ATA command, finishing when an execution protocol is selected.
 #[derive(Default)]
-pub struct AtaBuilder {
-    ata: Ata,
+pub struct CommandBuilder {
+    ata: Command,
 }
 
-impl AtaBuilder {
+impl CommandBuilder {
     pub fn new() -> Self {
-        Self { ata: Ata::new() }
+        Self {
+            ata: Command::new(),
+        }
     }
 
     pub fn feature(mut self, feature: u16) -> Self {
@@ -117,55 +119,55 @@ impl AtaBuilder {
         self
     }
 
-    pub fn command(mut self, command: AtaCmd) -> Self {
+    pub fn command(mut self, command: CommandCode) -> Self {
         self.ata.command = command;
         self
     }
 
-    fn build(mut self, protocol: AtaProtocol) -> Ata {
+    fn build(mut self, protocol: AtaProtocol) -> Command {
         self.ata.protocol = protocol;
         self.ata
     }
 
-    pub fn nondata(self) -> Ata {
+    pub fn nondata(self) -> Command {
         self.build(AtaProtocol::NonData)
     }
 
-    pub fn pio_data_in(self, len: XferLength) -> Ata {
+    pub fn pio_data_in(self, len: XferLength) -> Command {
         self.build(AtaProtocol::Pio {
             direction: XferDirection::TargetToInitiator(len),
         })
     }
 
-    pub fn pio_data_out(self, len: XferLength) -> Ata {
+    pub fn pio_data_out(self, len: XferLength) -> Command {
         self.build(AtaProtocol::Pio {
             direction: XferDirection::InitiatorToTarget(len),
         })
     }
 
-    pub fn dma_data_in(self, len: XferLength) -> Ata {
+    pub fn dma_data_in(self, len: XferLength) -> Command {
         self.build(AtaProtocol::Dma {
             direction: XferDirection::TargetToInitiator(len),
         })
     }
 
-    pub fn dma_data_out(self, len: XferLength) -> Ata {
+    pub fn dma_data_out(self, len: XferLength) -> Command {
         self.build(AtaProtocol::Dma {
             direction: XferDirection::InitiatorToTarget(len),
         })
     }
 
-    pub fn ncq_nondata(self) -> Ata {
+    pub fn ncq_nondata(self) -> Command {
         self.build(AtaProtocol::NcqNonData)
     }
 
-    pub fn ncq_data_in(self, len: XferLength) -> Ata {
+    pub fn ncq_data_in(self, len: XferLength) -> Command {
         self.build(AtaProtocol::Ncq {
             direction: XferDirection::TargetToInitiator(len),
         })
     }
 
-    pub fn ncq_data_out(self, len: XferLength) -> Ata {
+    pub fn ncq_data_out(self, len: XferLength) -> Command {
         self.build(AtaProtocol::Ncq {
             direction: XferDirection::InitiatorToTarget(len),
         })

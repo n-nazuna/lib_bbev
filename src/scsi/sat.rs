@@ -1,11 +1,11 @@
-use crate::ata::{Ata, AtaProtocol};
+use crate::ata::{AtaProtocol, Command as AtaCommand};
 use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
-use crate::scsi::{Cdb, Scsi};
+use crate::scsi::{Cdb, Command as ScsiCommand};
 pub struct AtaPt {
-    ata_cmd: Ata,
+    ata_cmd: AtaCommand,
 }
 impl AtaPt {
-    pub fn new(ata_cmd: Ata) -> Self {
+    pub fn new(ata_cmd: AtaCommand) -> Self {
         AtaPt { ata_cmd }
     }
     fn code(&self) -> u8 {
@@ -130,22 +130,22 @@ impl AtaPt {
         }
     }
 
-    pub fn cdb12(&self) -> Scsi {
-        Scsi {
+    pub fn cdb12(&self) -> ScsiCommand {
+        ScsiCommand {
             cdb: self.build_cdb12(),
             xfer: self.xfer(),
         }
     }
 
-    pub fn cdb16(&self) -> Scsi {
-        Scsi {
+    pub fn cdb16(&self) -> ScsiCommand {
+        ScsiCommand {
             cdb: self.build_cdb16(),
             xfer: self.xfer(),
         }
     }
 
-    pub fn cdb32(&self) -> Scsi {
-        Scsi {
+    pub fn cdb32(&self) -> ScsiCommand {
+        ScsiCommand {
             cdb: self.build_cdb32(),
             xfer: self.xfer(),
         }

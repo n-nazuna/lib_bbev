@@ -20,8 +20,8 @@ fn main() {
 
     let fd = file.as_raw_fd();
     let dev = Device::new(fd, 512, 1024);
-    let cmd = ata::Ata::builder()
-        .command(ata::AtaCmd::ReadLogDmaExt)
+    let cmd = ata::Command::builder()
+        .command(ata::CommandCode::ReadLogDmaExt)
         .count(1)
         .dma_data_in(XferLength::Pages(1));
     let cdb = sat::AtaPt::new(cmd).cdb16();

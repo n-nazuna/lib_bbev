@@ -1,6 +1,6 @@
 #[derive(Clone, Copy)]
 #[repr(u8)]
-pub enum AtaCmd {
+pub enum CommandCode {
     Nop = 0x00,
     Reserved01h = 0x01,
     Reserved02h = 0x02,

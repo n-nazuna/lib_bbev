@@ -1,10 +1,10 @@
 //! GPL.md §1〜3に基づくコマンド生成テスト。デバイスへの送信は行わない。
 
 use lib_bbev::ata::gpl::{Gpl, GplBuilder};
-use lib_bbev::ata::{Ata, AtaProtocol};
+use lib_bbev::ata::{AtaProtocol, Command};
 use lib_bbev::blk_cmd::{XferDirection, XferLength};
 
-fn commands(builder: impl Fn() -> GplBuilder) -> [Ata; 4] {
+fn commands(builder: impl Fn() -> GplBuilder) -> [Command; 4] {
     [
         builder().read_log_dma_ext(),
         builder().write_log_dma_ext(),

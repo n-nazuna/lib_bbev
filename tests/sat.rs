@@ -1,18 +1,18 @@
 //! SAT.md §3〜6.1 に基づくCDB生成テスト。デバイスへの送信は行わない。
 
-use lib_bbev::ata::{Ata, AtaCmd};
+use lib_bbev::ata::{Command as AtaCommand, CommandCode};
 use lib_bbev::blk_cmd::{XferDirection, XferLength, XferParameter};
 use lib_bbev::scsi::sat::AtaPt;
-use lib_bbev::scsi::{Cdb, Scsi};
+use lib_bbev::scsi::{Cdb, Command as ScsiCommand};
 
-fn conversions(command: Ata) -> [Scsi; 3] {
+fn conversions(command: AtaCommand) -> [ScsiCommand; 3] {
     let pt = AtaPt::new(command);
     [pt.cdb12(), pt.cdb16(), pt.cdb32()]
 }
 
 // flags: CDB12/16のByte 2、CDB32のByte 11に格納する転送フラグ1バイト。
 // bit 7:6=OFF_LINE、5=CK_COND、4=T_TYPE、3=T_DIR、2=BYTE_BLOCK、1:0=T_LENGTH。
-fn protocol_and_flags(scsi: &Scsi) -> (u8, u8) {
+fn protocol_and_flags(scsi: &ScsiCommand) -> (u8, u8) {
     let (protocol, flags) = match &scsi.cdb {
         Cdb::Cdb12(cdb) => {
             assert_eq!(cdb[1] & 0xe1, 0, "CDB12 reserved/obsolete bits");
@@ -40,8 +40,8 @@ fn protocol_and_flags(scsi: &Scsi) -> (u8, u8) {
 //         LBAは下位バイトから格納、DEVICEの下位4bitを保持、予約Byte 10は0。
 #[test]
 fn cdb12_register_layout() {
-    let command = Ata::builder()
-        .command(AtaCmd::ReadSectors)
+    let command = AtaCommand::builder()
+        .command(CommandCode::ReadSectors)
         .feature(0x12)
         .count(0x34)
         .lba(0x56_789a)
@@ -68,8 +68,8 @@ fn cdb12_register_layout() {
 //         EXTEND=1、LBAの格納順は [33 66 22 55 11 44]。
 #[test]
 fn cdb16_register_layout() {
-    let command = Ata::builder()
-        .command(AtaCmd::ReadSectorsExt)
+    let command = AtaCommand::builder()
+        .command(CommandCode::ReadSectorsExt)
         .feature(0x7788)
         .count(0x99aa)
         .lba(0x1122_3344_5566)
@@ -99,8 +99,8 @@ fn cdb16_register_layout() {
 // 追加長=0x18、service action=0x1ff0、EXTEND=1。レジスタは上位バイトから格納。
 #[test]
 fn cdb32_register_layout() {
-    let command = Ata::builder()
-        .command(AtaCmd::ReadDmaExt)
+    let command = AtaCommand::builder()
+        .command(CommandCode::ReadDmaExt)
         .feature(0x7788)
         .count(0x99aa)
         .lba(0x1122_3344_5566)
@@ -132,12 +132,12 @@ struct ExpectedFields {
 }
 
 struct DataTestCase {
-    input: Ata,
+    input: AtaCommand,
     expected_fields: ExpectedFields,
     expected_transfer: XferParameter,
 }
 
-fn assert_fields(scsi: &Scsi, expected: &ExpectedFields) {
+fn assert_fields(scsi: &ScsiCommand, expected: &ExpectedFields) {
     let (protocol, flags) = protocol_and_flags(scsi);
     assert_eq!(protocol, expected.protocol, "PROTOCOL: {:?}", scsi.cdb);
     assert_eq!((flags >> 4) & 1, expected.t_type, "T_TYPE: {:?}", scsi.cdb);
@@ -162,10 +162,12 @@ fn assert_fields(scsi: &Scsi, expected: &ExpectedFields) {
 fn data_protocols_and_directions() {
     use XferDirection::{InitiatorToTarget, TargetToInitiator};
     let length = XferLength::Sectors(2);
-    let builder = || Ata::builder().count(2).feature(2);
+    let builder = || AtaCommand::builder().count(2).feature(2);
     let cases = [
         DataTestCase {
-            input: builder().command(AtaCmd::ReadSectors).pio_data_in(length),
+            input: builder()
+                .command(CommandCode::ReadSectors)
+                .pio_data_in(length),
             expected_fields: ExpectedFields {
                 protocol: 0x04,
                 t_type: 1,
@@ -176,7 +178,9 @@ fn data_protocols_and_directions() {
             expected_transfer: XferParameter::XferDirection(TargetToInitiator(length)),
         },
         DataTestCase {
-            input: builder().command(AtaCmd::WriteSectors).pio_data_out(length),
+            input: builder()
+                .command(CommandCode::WriteSectors)
+                .pio_data_out(length),
             expected_fields: ExpectedFields {
                 protocol: 0x05,
                 t_type: 1,
@@ -187,7 +191,7 @@ fn data_protocols_and_directions() {
             expected_transfer: XferParameter::XferDirection(InitiatorToTarget(length)),
         },
         DataTestCase {
-            input: builder().command(AtaCmd::ReadDma).dma_data_in(length),
+            input: builder().command(CommandCode::ReadDma).dma_data_in(length),
             expected_fields: ExpectedFields {
                 protocol: 0x06,
                 t_type: 1,
@@ -198,7 +202,9 @@ fn data_protocols_and_directions() {
             expected_transfer: XferParameter::XferDirection(TargetToInitiator(length)),
         },
         DataTestCase {
-            input: builder().command(AtaCmd::WriteDma).dma_data_out(length),
+            input: builder()
+                .command(CommandCode::WriteDma)
+                .dma_data_out(length),
             expected_fields: ExpectedFields {
                 protocol: 0x06,
                 t_type: 1,
@@ -210,7 +216,7 @@ fn data_protocols_and_directions() {
         },
         DataTestCase {
             input: builder()
-                .command(AtaCmd::ReadFpdmaQueued)
+                .command(CommandCode::ReadFpdmaQueued)
                 .ncq_data_in(length),
             expected_fields: ExpectedFields {
                 protocol: 0x0c,
@@ -223,7 +229,7 @@ fn data_protocols_and_directions() {
         },
         DataTestCase {
             input: builder()
-                .command(AtaCmd::WriteFpdmaQueued)
+                .command(CommandCode::WriteFpdmaQueued)
                 .ncq_data_out(length),
             expected_fields: ExpectedFields {
                 protocol: 0x0c,
@@ -282,8 +288,8 @@ fn transfer_units_in_both_directions() {
         let length = case.input_length;
         let directions = [
             DataTestCase {
-                input: Ata::builder()
-                    .command(AtaCmd::ReadSectors)
+                input: AtaCommand::builder()
+                    .command(CommandCode::ReadSectors)
                     .count(2)
                     .pio_data_in(length),
                 expected_fields: ExpectedFields {
@@ -298,8 +304,8 @@ fn transfer_units_in_both_directions() {
                 )),
             },
             DataTestCase {
-                input: Ata::builder()
-                    .command(AtaCmd::WriteSectors)
+                input: AtaCommand::builder()
+                    .command(CommandCode::WriteSectors)
                     .count(2)
                     .pio_data_out(length),
                 expected_fields: ExpectedFields {
@@ -337,11 +343,11 @@ fn transfer_units_in_both_directions() {
 fn fpdma_transfer_length_comes_from_features() {
     let sectors = XferLength::Sectors(0x1234);
     let pages = XferLength::Pages(0x1234);
-    let builder = || Ata::builder().feature(0x1234).count(0x00a8);
+    let builder = || AtaCommand::builder().feature(0x1234).count(0x00a8);
     let cases = [
         DataTestCase {
             input: builder()
-                .command(AtaCmd::ReadFpdmaQueued)
+                .command(CommandCode::ReadFpdmaQueued)
                 .ncq_data_in(sectors),
             expected_fields: ExpectedFields {
                 protocol: 0x0c,
@@ -356,7 +362,7 @@ fn fpdma_transfer_length_comes_from_features() {
         },
         DataTestCase {
             input: builder()
-                .command(AtaCmd::WriteFpdmaQueued)
+                .command(CommandCode::WriteFpdmaQueued)
                 .ncq_data_out(sectors),
             expected_fields: ExpectedFields {
                 protocol: 0x0c,
@@ -371,7 +377,7 @@ fn fpdma_transfer_length_comes_from_features() {
         },
         DataTestCase {
             input: builder()
-                .command(AtaCmd::ReceiveFpdmaQueued)
+                .command(CommandCode::ReceiveFpdmaQueued)
                 .ncq_data_in(pages),
             expected_fields: ExpectedFields {
                 protocol: 0x0c,
@@ -386,7 +392,7 @@ fn fpdma_transfer_length_comes_from_features() {
         },
         DataTestCase {
             input: builder()
-                .command(AtaCmd::SendFpdmaQueued)
+                .command(CommandCode::SendFpdmaQueued)
                 .ncq_data_out(pages),
             expected_fields: ExpectedFields {
                 protocol: 0x0c,
@@ -428,15 +434,15 @@ fn fpdma_transfer_length_comes_from_features() {
 #[test]
 fn nondata_protocols_disable_transfer() {
     struct TestCase {
-        input: Ata,
+        input: AtaCommand,
         expected_protocol: u8,
         expected_t_length: u8,
         expected_transfer: XferParameter,
     }
     let cases = [
         TestCase {
-            input: Ata::builder()
-                .command(AtaCmd::FlushCache)
+            input: AtaCommand::builder()
+                .command(CommandCode::FlushCache)
                 .count(0xff)
                 .nondata(),
             expected_protocol: 0x03,
@@ -444,8 +450,8 @@ fn nondata_protocols_disable_transfer() {
             expected_transfer: XferParameter::NoDataTransfer,
         },
         TestCase {
-            input: Ata::builder()
-                .command(AtaCmd::NcqNonData)
+            input: AtaCommand::builder()
+                .command(CommandCode::NcqNonData)
                 .feature(0xff)
                 .ncq_nondata(),
             expected_protocol: 0x0c,

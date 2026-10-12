@@ -1,5 +1,5 @@
 use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
-use crate::scsi::Scsi;
+use crate::scsi::Command;
 use std::fmt;
 use std::io;
 
@@ -217,14 +217,14 @@ impl Device {
         Ok(requested)
     }
 
-    pub fn allocate(&self, cmd: &Scsi) -> Result<Vec<u8>, SgIoError> {
+    pub fn allocate(&self, cmd: &Command) -> Result<Vec<u8>, SgIoError> {
         Ok(vec![0; self.transfer_len_bytes(cmd.xfer)?])
     }
 
     /// Executes a command and requires the entire requested buffer to transfer.
     /// A non-zero residual is returned as an error; partially transferred data
     /// may still be present in `buf` when execution fails.
-    pub fn execute(&self, cmd: &Scsi, buf: &mut [u8]) -> Result<(), SgIoError> {
+    pub fn execute(&self, cmd: &Command, buf: &mut [u8]) -> Result<(), SgIoError> {
         let cdb_slice = cmd.cdb.as_bytes();
         let xfer = cmd.xfer;
         let expected_len = self.transfer_len_bytes(xfer)?;
@@ -289,10 +289,10 @@ impl Device {
 mod tests {
     use super::{Device, SgIoError, SgIoErrorKind};
     use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
-    use crate::scsi::{Cdb, Scsi};
+    use crate::scsi::{Cdb, Command};
 
-    fn read_command(sectors: u32) -> Scsi {
-        Scsi {
+    fn read_command(sectors: u32) -> Command {
+        Command {
             cdb: Cdb::Cdb16([0; 16]),
             xfer: XferParameter::XferDirection(XferDirection::TargetToInitiator(
                 XferLength::Sectors(sectors),
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn no_data_command_uses_an_empty_buffer() {
         let device = Device::new(-1, 512, 1);
-        let command = Scsi {
+        let command = Command {
             cdb: Cdb::Cdb16([0; 16]),
             xfer: XferParameter::NoDataTransfer,
         };
@@ -336,7 +336,7 @@ mod tests {
     fn pages_and_bytes_lengths_are_converted_to_the_expected_byte_count() {
         let device = Device::new(-1, 512, 10);
 
-        let pages = Scsi {
+        let pages = Command {
             cdb: Cdb::Cdb16([0; 16]),
             xfer: XferParameter::XferDirection(XferDirection::TargetToInitiator(
                 XferLength::Pages(2),
@@ -344,7 +344,7 @@ mod tests {
         };
         assert_eq!(device.allocate(&pages).unwrap().len(), 1024);
 
-        let bytes = Scsi {
+        let bytes = Command {
             cdb: Cdb::Cdb16([0; 16]),
             xfer: XferParameter::XferDirection(XferDirection::TargetToInitiator(
                 XferLength::Bytes(777),
