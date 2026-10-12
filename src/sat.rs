@@ -64,6 +64,22 @@ impl AtaPt {
             | t_length
     }
 
+    fn build_cdb12(&self) -> Cdb {
+        let mut cdb = [0u8; 12];
+        cdb[0] = 0xa1; // ATA PASS-THROUGH (12)
+        cdb[1] = self.code() << 1;
+        cdb[2] = self.byte2();
+        cdb[3] = self.ata_cmd.feature as u8;
+        cdb[4] = self.ata_cmd.count as u8;
+        cdb[5] = self.ata_cmd.lba as u8;
+        cdb[6] = (self.ata_cmd.lba >> 8) as u8;
+        cdb[7] = (self.ata_cmd.lba >> 16) as u8;
+        cdb[8] = self.ata_cmd.device;
+        cdb[9] = self.ata_cmd.command as u8;
+        cdb[11] = self.ata_cmd.control;
+        Cdb::Cdb12(cdb)
+    }
+
     fn build_cdb16(&self) -> Cdb {
         let mut cdb = [0u8; 16];
         cdb[0] = 0x85; // ATA PASS-THROUGH (16)
@@ -113,6 +129,14 @@ impl AtaPt {
             | AtaProtocol::Ncq { direction } => XferParameter::XferDirection(*direction),
         }
     }
+
+    pub fn cdb12(&self) -> Scsi {
+        Scsi {
+            cdb: self.build_cdb12(),
+            xfer: self.xfer(),
+        }
+    }
+
     pub fn cdb16(&self) -> Scsi {
         Scsi {
             cdb: self.build_cdb16(),
