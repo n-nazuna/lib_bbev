@@ -1,6 +1,6 @@
 use lib_bbev::blk_cmd::XferLength;
 use lib_bbev::sg_io::Device;
-use lib_bbev::{ata, sat};
+use lib_bbev::{ata, scsi::sat};
 use std::env;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;

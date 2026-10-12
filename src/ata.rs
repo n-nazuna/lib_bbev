@@ -1,8 +1,6 @@
-pub use crate::ata_cmd::AtaCmd;
-use crate::{
-    ata_cmd,
-    blk_cmd::{XferDirection, XferLength},
-};
+pub mod ata_cmd;
+pub use ata_cmd::AtaCmd;
+use crate::blk_cmd::{XferDirection, XferLength};
 pub enum AtaProtocol {
     NonData,
     Pio { direction: XferDirection },
