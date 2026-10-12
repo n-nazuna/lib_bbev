@@ -1,5 +1,5 @@
 use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
-use crate::scsi::{Cdb, Scsi};
+use crate::scsi::Scsi;
 use std::fmt;
 use std::io;
 
@@ -163,18 +163,6 @@ fn check_completion(hdr: &SgIoHdr, sense: [u8; 32]) -> Result<(), SgIoError> {
     Ok(())
 }
 
-impl Cdb {
-    fn as_slice(&self) -> &[u8] {
-        match self {
-            Cdb::Cdb6(b) => &b[..],
-            Cdb::Cdb10(b) => &b[..],
-            Cdb::Cdb12(b) => &b[..],
-            Cdb::Cdb16(b) => &b[..],
-            Cdb::Cdb32(b) => &b[..],
-        }
-    }
-}
-
 impl Device {
     pub fn new(fd: i32, sector_size_bytes: u32, max_sectors_kbytes: u32) -> Self {
         Self {
@@ -237,7 +225,7 @@ impl Device {
     /// A non-zero residual is returned as an error; partially transferred data
     /// may still be present in `buf` when execution fails.
     pub fn execute(&self, cmd: &Scsi, buf: &mut [u8]) -> Result<(), SgIoError> {
-        let cdb_slice = cmd.cdb.as_slice();
+        let cdb_slice = cmd.cdb.as_bytes();
         let xfer = cmd.xfer;
         let expected_len = self.transfer_len_bytes(xfer)?;
 
