@@ -1,4 +1,5 @@
 use lib_bbev::blk_cmd::XferLength;
+use lib_bbev::scsi::Status;
 use lib_bbev::sg_io::Device;
 use lib_bbev::{ata, scsi::sat};
 use std::env;
@@ -29,7 +30,7 @@ fn main() {
     let mut buf = dev.allocate(&cdb).expect("Failed to allocate buffer");
 
     match dev.execute(&cdb, &mut buf) {
-        Ok(()) => {
+        Ok(response) if response.status == Status::Good => {
             println!("Success! First 32 bytes:");
             for (i, b) in buf.iter().take(32).enumerate() {
                 print!("{:02X} ", b);
@@ -38,6 +39,7 @@ fn main() {
                 }
             }
         }
+        Ok(response) => eprintln!("SCSI command failed: {response:?}"),
         Err(e) => {
             eprintln!("Error: {e}");
         }
