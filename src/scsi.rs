@@ -13,6 +13,7 @@ pub struct Command {
     pub cdb: Cdb,
     pub xfer: XferParameter,
 }
+
 impl Cdb {
     pub fn as_bytes(&self) -> &[u8] {
         match self {
@@ -24,12 +25,15 @@ impl Cdb {
         }
     }
 }
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Status {
     Good,
     CheckCondition,
     Busy,
     ReservationConflict,
+    Other(u8),
 }
+#[derive(Debug)]
 pub enum SenseData {
     CurrentFixed(FixedSense),
     CurrentDescriptor(DescriptorSense),
@@ -85,6 +89,7 @@ impl SenseData {
         }
     }
 }
+#[derive(Debug)]
 pub struct FixedSense {
     pub valid: bool,
     pub filemark: bool,
@@ -101,6 +106,7 @@ pub struct FixedSense {
     pub additional_sense: Vec<u8>,
 }
 
+#[derive(Debug)]
 pub struct DescriptorSense {
     pub sense_key: u8,
     pub additional_sense_code: u8,
@@ -108,6 +114,7 @@ pub struct DescriptorSense {
     pub additional_sense_length: u8,
     pub sense_data_descriptor: Vec<u8>,
 }
+#[derive(Debug)]
 pub struct Response {
     pub status: Status,
     pub sense_data: Option<SenseData>,

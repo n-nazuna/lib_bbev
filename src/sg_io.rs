@@ -1,5 +1,5 @@
 use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
-use crate::scsi::Command;
+use crate::scsi::{Command, Response, SenseData, Status};
 use std::fmt;
 use std::io;
 
@@ -30,34 +30,12 @@ pub enum SgIoErrorKind {
         requested: u32,
         residual: i32,
     },
-    ScsiError {
+    TransportError {
         status: u8,
         host_status: u16,
         driver_status: u16,
-        sense: [u8; 32],
+        sense: Vec<u8>,
     },
-}
-
-fn format_sense(f: &mut fmt::Formatter<'_>, sense: &[u8; 32]) -> fmt::Result {
-    let highlighted_indices: &[usize] = match sense[0] & 0x7f {
-        0x70 | 0x71 => &[2, 12, 13],
-        0x72 | 0x73 => &[1, 2, 3],
-        _ => &[],
-    };
-
-    for (index, byte) in sense.iter().enumerate() {
-        if index != 0 {
-            write!(f, " ")?;
-        }
-
-        if highlighted_indices.contains(&index) {
-            write!(f, "[{byte:02X}]")?;
-        } else {
-            write!(f, "{byte:02X}")?;
-        }
-    }
-
-    Ok(())
 }
 
 impl fmt::Display for SgIoError {
@@ -86,7 +64,7 @@ impl fmt::Display for SgIoError {
                     "incomplete or invalid transfer: requested={requested} bytes, residual={residual} bytes"
                 )
             }
-            SgIoErrorKind::ScsiError {
+            SgIoErrorKind::TransportError {
                 status,
                 host_status,
                 driver_status,
@@ -94,10 +72,9 @@ impl fmt::Display for SgIoError {
             } => {
                 write!(
                     f,
-                    "SCSI command failed: status=0x{status:02X}, host_status=0x{host_status:04X}, \
-                     driver_status=0x{driver_status:04X}, sense="
-                )?;
-                format_sense(f, sense)
+                    "SG_IO transport failed: status=0x{status:02X}, host_status=0x{host_status:04X}, \
+                     driver_status=0x{driver_status:04X}, sense={sense:02X?}"
+                )
             }
         }
     }
@@ -136,22 +113,28 @@ const SG_DXFER_NONE: i32 = -1;
 const SG_DXFER_TO_DEV: i32 = -2;
 const SG_DXFER_FROM_DEV: i32 = -3;
 const DEFAULT_TIMEOUT_MILLIS: u32 = 1_200_000_000;
+// SG reports DRIVER_SENSE for CHECK CONDITION even when transport succeeded.
+const DRIVER_SENSE: u16 = 0x08;
 
-fn check_completion(hdr: &SgIoHdr, sense: [u8; 32]) -> Result<(), SgIoError> {
-    if hdr.status != 0 || hdr.host_status != 0 || hdr.driver_status != 0 {
+fn check_completion(hdr: &SgIoHdr, sense: &[u8]) -> Result<Response, SgIoError> {
+    let sense_len = usize::from(hdr.sb_len_wr).min(sense.len());
+    let sense = &sense[..sense_len];
+    if hdr.host_status != 0
+        || (hdr.driver_status != 0 && !(hdr.status == 0x02 && hdr.driver_status == DRIVER_SENSE))
+    {
         return Err(SgIoError {
-            kind: SgIoErrorKind::ScsiError {
+            kind: SgIoErrorKind::TransportError {
                 status: hdr.status,
                 host_status: hdr.host_status,
                 driver_status: hdr.driver_status,
-                sense,
+                sense: sense.to_vec(),
             },
         });
     }
 
-    // execute() promises the complete requested transfer. Keep the signed
-    // residual so overruns and malformed completion values are also rejected.
-    if hdr.resid != 0 {
+    // A successful command must transfer the whole buffer. A failed command
+    // may transfer only part of it; return its SCSI status and sense to the caller.
+    if hdr.resid < 0 || hdr.resid as u32 > hdr.dxfer_len || (hdr.status == 0 && hdr.resid != 0) {
         return Err(SgIoError {
             kind: SgIoErrorKind::UnexpectedResidual {
                 requested: hdr.dxfer_len,
@@ -160,7 +143,16 @@ fn check_completion(hdr: &SgIoHdr, sense: [u8; 32]) -> Result<(), SgIoError> {
         });
     }
 
-    Ok(())
+    Ok(Response {
+        status: match hdr.status {
+            0x00 => Status::Good,
+            0x02 => Status::CheckCondition,
+            0x08 => Status::Busy,
+            0x18 => Status::ReservationConflict,
+            status => Status::Other(status),
+        },
+        sense_data: SenseData::from_bytes(sense),
+    })
 }
 
 impl Device {
@@ -220,11 +212,9 @@ impl Device {
     pub fn allocate(&self, cmd: &Command) -> Result<Vec<u8>, SgIoError> {
         Ok(vec![0; self.transfer_len_bytes(cmd.xfer)?])
     }
-
-    /// Executes a command and requires the entire requested buffer to transfer.
-    /// A non-zero residual is returned as an error; partially transferred data
-    /// may still be present in `buf` when execution fails.
-    pub fn execute(&self, cmd: &Command, buf: &mut [u8]) -> Result<(), SgIoError> {
+    /// GOOD requires a complete transfer. On other SCSI statuses or an error,
+    /// partially transferred data may still be present in `buf`.
+    pub fn execute(&self, cmd: &Command, buf: &mut [u8]) -> Result<Response, SgIoError> {
         let cdb_slice = cmd.cdb.as_bytes();
         let xfer = cmd.xfer;
         let expected_len = self.transfer_len_bytes(xfer)?;
@@ -281,15 +271,15 @@ impl Device {
             });
         }
 
-        check_completion(&hdr, sense_buffer)
+        check_completion(&hdr, &sense_buffer)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Device, SgIoError, SgIoErrorKind};
+    use super::{Device, SgIoErrorKind, SgIoHdr, check_completion};
     use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
-    use crate::scsi::{Cdb, Command};
+    use crate::scsi::{Cdb, Command, SenseData, Status};
 
     fn read_command(sectors: u32) -> Command {
         Command {
@@ -353,47 +343,127 @@ mod tests {
         assert_eq!(device.allocate(&bytes).unwrap().len(), 777);
     }
 
-    #[test]
-    fn display_highlights_key_asc_and_ascq_in_fixed_format_sense() {
-        let mut sense = [0; 32];
-        sense[0] = 0xf0;
-        sense[2] = 0x05;
-        sense[12] = 0x20;
-        sense[13] = 0x00;
-
-        let error = SgIoError {
-            kind: SgIoErrorKind::ScsiError {
-                status: 2,
-                host_status: 0,
-                driver_status: 0,
-                sense,
-            },
-        };
-
-        assert!(
-            error
-                .to_string()
-                .contains("sense=F0 00 [05] 00 00 00 00 00 00 00 00 00 [20] [00]")
-        );
+    fn completion_header(status: u8) -> SgIoHdr {
+        SgIoHdr {
+            interface_id: b'S' as i32,
+            dxfer_direction: super::SG_DXFER_FROM_DEV,
+            cmd_len: 16,
+            mx_sb_len: 32,
+            iovec_count: 0,
+            dxfer_len: 512,
+            dxferp: std::ptr::null_mut(),
+            cmdp: std::ptr::null(),
+            sbp: std::ptr::null_mut(),
+            timeout: super::DEFAULT_TIMEOUT_MILLIS,
+            flags: 0,
+            pack_id: 0,
+            usr_ptr: std::ptr::null_mut(),
+            status,
+            masked_status: 0,
+            msg_status: 0,
+            sb_len_wr: 0,
+            host_status: 0,
+            driver_status: 0,
+            resid: 0,
+            duration: 0,
+            info: 0,
+        }
     }
 
+    // 入力: GOOD / BUSY / RESERVATION CONFLICT / 未定義status、host/driverエラーなし。
+    // 期待値: いずれもOk(Response)、statusを保持、senseなし。
     #[test]
-    fn display_highlights_key_asc_and_ascq_in_descriptor_format_sense() {
-        let mut sense = [0; 32];
-        sense[0] = 0x72;
-        sense[1] = 0x06;
-        sense[2] = 0x29;
-        sense[3] = 0x00;
+    fn command_status_is_returned_as_a_response() {
+        for (status, expected) in [
+            (0x00, Status::Good),
+            (0x08, Status::Busy),
+            (0x18, Status::ReservationConflict),
+            (0x28, Status::Other(0x28)),
+        ] {
+            let response = check_completion(&completion_header(status), &[0; 32]).unwrap();
+            assert_eq!(response.status, expected, "SCSI STATUS");
+            assert!(response.sense_data.is_none(), "SENSE DATA");
+        }
+    }
 
-        let error = SgIoError {
-            kind: SgIoErrorKind::ScsiError {
-                status: 2,
-                host_status: 0,
-                driver_status: 0,
-                sense,
-            },
+    // 入力: CHECK CONDITION、DRIVER_SENSE、残量512、22バイトのATA descriptor sense。
+    // 期待値: 送信エラーにせずResponseを返し、SAT経由でSTATUS=51/ERROR=04を取得。
+    #[test]
+    fn check_condition_with_driver_sense_reaches_sat() {
+        let mut hdr = completion_header(0x02);
+        hdr.driver_status = super::DRIVER_SENSE;
+        hdr.resid = 512;
+        hdr.sb_len_wr = 22;
+        let sense = [
+            0x72, 0x0b, 0, 0, 0, 0, 0, 14, 0x09, 0x0c, 1, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0x40, 0x51,
+        ];
+        let response = check_completion(&hdr, &sense).unwrap();
+        assert_eq!(response.status, Status::CheckCondition, "SCSI STATUS");
+        let sat = crate::scsi::sat::AtaPt::new(crate::ata::Command::builder().nondata());
+        let ata = sat.response(&response).unwrap();
+        assert_eq!(ata.status, 0x51, "ATA STATUS");
+        assert_eq!(ata.error, 0x04, "ATA ERROR");
+    }
+
+    // 入力: 実バッファにはATA descriptorがあるが、sb_len_wr=8（senseヘッダのみ）。
+    // 期待値: descriptor本体を読まず、SAT変換結果はNone。
+    #[test]
+    fn only_written_sense_bytes_are_parsed() {
+        let mut hdr = completion_header(0x02);
+        hdr.sb_len_wr = 8;
+        let sense = [
+            0x72, 0x0b, 0, 0, 0, 0, 0, 14, 0x09, 0x0c, 1, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0x40, 0x51,
+        ];
+        let response = check_completion(&hdr, &sense).unwrap();
+        let Some(SenseData::CurrentDescriptor(sense)) = &response.sense_data else {
+            panic!("expected descriptor sense");
         };
+        assert!(sense.sense_data_descriptor.is_empty(), "DESCRIPTORS");
+        let sat = crate::scsi::sat::AtaPt::new(crate::ata::Command::builder().nondata());
+        assert!(sat.response(&response).is_none());
+    }
 
-        assert!(error.to_string().contains("sense=72 [06] [29] [00]"));
+    // 入力: CHECK CONDITIONとhostエラー、またはdriverエラー。
+    // 期待値: transport失敗としてErr。SCSI応答として成功扱いしない。
+    #[test]
+    fn host_and_driver_failures_remain_errors() {
+        let mut host_failure = completion_header(0x02);
+        host_failure.host_status = 1;
+        let mut driver_failure = completion_header(0x02);
+        driver_failure.driver_status = 4;
+        for hdr in [host_failure, driver_failure] {
+            assert!(matches!(
+                check_completion(&hdr, &[]),
+                Err(error) if matches!(error.kind, SgIoErrorKind::TransportError { .. })
+            ));
+        }
+    }
+
+    // 入力: GOODだが残量が1、または-1（overrun）。
+    // 期待値: 全量転送の契約を保ち、UnexpectedResidualを返す。
+    #[test]
+    fn good_requires_a_complete_transfer() {
+        for residual in [1, -1] {
+            let mut hdr = completion_header(0);
+            hdr.resid = residual;
+            assert!(matches!(
+                check_completion(&hdr, &[]),
+                Err(error) if matches!(error.kind, SgIoErrorKind::UnexpectedResidual { residual: value, .. } if value == residual)
+            ));
+        }
+    }
+
+    // 入力: CHECK CONDITIONだが残量が-1、または要求長512を超える513。
+    // 期待値: 不正な転送情報をUnexpectedResidualとして返す。
+    #[test]
+    fn check_condition_rejects_invalid_residuals() {
+        for residual in [-1, 513] {
+            let mut hdr = completion_header(0x02);
+            hdr.resid = residual;
+            assert!(matches!(
+                check_completion(&hdr, &[]),
+                Err(error) if matches!(error.kind, SgIoErrorKind::UnexpectedResidual { residual: value, .. } if value == residual)
+            ));
+        }
     }
 }
