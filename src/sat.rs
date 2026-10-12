@@ -8,7 +8,7 @@ impl AtaPt {
     pub fn new(ata_cmd: Ata) -> Self {
         AtaPt { ata_cmd }
     }
-    pub fn code(&self) -> u8 {
+    fn code(&self) -> u8 {
         match &self.ata_cmd.protocol {
             AtaProtocol::NonData => 0x3,
             AtaProtocol::Pio { direction, .. } => match direction {
@@ -63,8 +63,7 @@ impl AtaPt {
             | (byte_block << 2)
             | t_length
     }
-}
-impl AtaPt {
+
     fn build_cdb16(&self) -> Cdb {
         let mut cdb = [0u8; 16];
         cdb[0] = 0x85; // ATA PASS-THROUGH (16)
@@ -120,6 +119,7 @@ impl AtaPt {
             xfer: self.xfer(),
         }
     }
+
     pub fn cdb32(&self) -> Scsi {
         Scsi {
             cdb: self.build_cdb32(),
