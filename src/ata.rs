@@ -196,7 +196,7 @@ impl Gpl {
     pub fn receive_fpdma_queued(self) -> Ata {
         Ata {
             feature: self.page_count,
-            count: 0x01 << 8, // REAF LOG DMA EXT SUBCOMMAND
+            count: 0x01 << 8, // READ LOG DMA EXT SUBCOMMAND
             lba: self.lba(),
             control: 0,
             icc: 0,
@@ -213,7 +213,7 @@ impl Gpl {
     pub fn send_fpdma_queued(self) -> Ata {
         Ata {
             feature: self.page_count,
-            count: 0x01 << 8, // WRITE LOG DMA EXT SUBCOMMAND
+            count: 0x02 << 8, // WRITE LOG DMA EXT SUBCOMMAND
             lba: self.lba(),
             control: 0,
             icc: 0,
@@ -326,3 +326,4 @@ mod tests {
         ));
     }
 }
+

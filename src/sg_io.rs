@@ -43,6 +43,10 @@ pub enum SgIoErrorKind {
         expected: usize,
         actual: usize,
     },
+    UnexpectedResidual {
+        requested: u32,
+        residual: i32,
+    },
     ScsiError {
         status: u8,
         host_status: u16,
@@ -88,6 +92,12 @@ impl fmt::Display for SgIoError {
                 write!(
                     f,
                     "transfer length mismatch: expected={expected} bytes, actual={actual} bytes"
+                )
+            }
+            SgIoErrorKind::UnexpectedResidual { requested, residual } => {
+                write!(
+                    f,
+                    "incomplete or invalid transfer: requested={requested} bytes, residual={residual} bytes"
                 )
             }
             SgIoErrorKind::ScsiError {
@@ -140,6 +150,32 @@ const SG_DXFER_NONE: i32 = -1;
 const SG_DXFER_TO_DEV: i32 = -2;
 const SG_DXFER_FROM_DEV: i32 = -3;
 const DEFAULT_TIMEOUT_MILLIS: u32 = 1200_000_000;
+
+fn check_completion(hdr: &SgIoHdr, sense: [u8; 32]) -> Result<(), SgIoError> {
+    if hdr.status != 0 || hdr.host_status != 0 || hdr.driver_status != 0 {
+        return Err(SgIoError {
+            kind: SgIoErrorKind::ScsiError {
+                status: hdr.status,
+                host_status: hdr.host_status,
+                driver_status: hdr.driver_status,
+                sense,
+            },
+        });
+    }
+
+    // execute() promises the complete requested transfer. Keep the signed
+    // residual so overruns and malformed completion values are also rejected.
+    if hdr.resid != 0 {
+        return Err(SgIoError {
+            kind: SgIoErrorKind::UnexpectedResidual {
+                requested: hdr.dxfer_len,
+                residual: hdr.resid,
+            },
+        });
+    }
+
+    Ok(())
+}
 
 impl Cdb {
     fn as_slice(&self) -> &[u8] {
@@ -211,6 +247,9 @@ impl Device {
         Ok(vec![0; self.transfer_len_bytes(cmd.xfer)?])
     }
 
+    /// Executes a command and requires the entire requested buffer to transfer.
+    /// A non-zero residual is returned as an error; partially transferred data
+    /// may still be present in `buf` when execution fails.
     pub fn execute(&self, cmd: &Scsi, buf: &mut [u8]) -> Result<(), SgIoError> {
         let cdb_slice = cmd.cdb.as_slice();
         let xfer = cmd.xfer;
@@ -268,18 +307,7 @@ impl Device {
             });
         }
 
-        if hdr.status != 0 || hdr.host_status != 0 || hdr.driver_status != 0 {
-            return Err(SgIoError {
-                kind: SgIoErrorKind::ScsiError {
-                    status: hdr.status,
-                    host_status: hdr.host_status,
-                    driver_status: hdr.driver_status,
-                    sense: sense_buffer,
-                },
-            });
-        }
-
-        Ok(())
+        check_completion(&hdr, sense_buffer)
     }
 }
 
@@ -394,3 +422,4 @@ mod tests {
             .contains("sense=72 [06] [29] [00]"));
     }
 }
+

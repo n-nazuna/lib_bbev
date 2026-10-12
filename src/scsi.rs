@@ -45,7 +45,7 @@ impl AtaPt {
             | XferParameter::XferDirection(XferDirection::InitiatorToTarget(length)) => {
                 match length {
                     XferLength::Pages(_) => (1u8, 0u8),
-                    XferLength::Sectors(_) => (1u8, 0u8),
+                    XferLength::Sectors(_) => (1u8, 1u8),
                     XferLength::Bytes(_) => (0u8, 0u8),
                 }
             }
@@ -65,13 +65,13 @@ impl AtaPt {
                 ))),
                 0x66,
             ) => 0b11,
-            (_, 0x60 | 0x61 | 0x63 | 0x65) => 0b01, // FPDMA
+            (_, 0x60 | 0x61 | 0x63 | 0x64 | 0x65) => 0b01, // FPDMA
             (_, _) => 0b10,
         };
-        (offline << 7)
-            | (ck_cond << 6)
-            | (t_type << 5)
-            | (t_dir << 4)
+        (offline << 6)
+            | (ck_cond << 5)
+            | (t_type << 4)
+            | (t_dir << 3)
             | (byte_block << 2)
             | t_length
     }
@@ -258,7 +258,7 @@ mod tests {
             .device(0xAA)
             .command(AtaCmd::ReadLogDmaExt)
             .protocol(AtaProtocol::Dma {
-                direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
+                direction: XferDirection::TargetToInitiator(XferLength::Pages(0x5678)),
             });
 
         let scsi = AtaPt::new(ata_cmd).cdb16();
@@ -268,7 +268,7 @@ mod tests {
         };
         assert_eq!(cdb[0], 0x85); // ATA PASS-THROUGH (16)
         assert_eq!(cdb[1], 0x6 << 1 | 1); // DMA protocol, EXTEND bit set
-        assert_eq!(cdb[2], 0x16); // byte2: t_dir=1, byte_block=1, t_length=0b10
+        assert_eq!(cdb[2], 0x0E); // T_DIR=1, T_TYPE=0, BYTE_BLOCK=1, T_LENGTH=2
         assert_eq!(cdb[3], 0x12); // feature high
         assert_eq!(cdb[4], 0x34); // feature low
         assert_eq!(cdb[5], 0x56); // count high
@@ -285,7 +285,7 @@ mod tests {
 
         assert!(matches!(
             scsi.xfer,
-            XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Sectors(1)))
+            XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Pages(0x5678)))
         ));
     }
 
@@ -301,7 +301,7 @@ mod tests {
             .device(0xAA)
             .command(AtaCmd::ReadLogDmaExt)
             .protocol(AtaProtocol::Dma {
-                direction: XferDirection::TargetToInitiator(XferLength::Sectors(1)),
+                direction: XferDirection::TargetToInitiator(XferLength::Pages(0x5678)),
             });
 
         let scsi = AtaPt::new(ata_cmd).cdb32();
@@ -312,14 +312,14 @@ mod tests {
         assert_eq!(
             cdb,
             [
-                0x7F, 0xBB, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x1F, 0xF0, 0x0D, 0x16,
+                0x7F, 0xBB, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x1F, 0xF0, 0x0D, 0x0E,
                 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x12, 0x34, 0x56, 0x78,
                 0xAA, AtaCmd::ReadLogDmaExt as u8, 0x00, 0xCC, 0x11, 0x22, 0x33, 0x44,
             ]
         );
         assert!(matches!(
             scsi.xfer,
-            XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Sectors(1)))
+            XferParameter::XferDirection(XferDirection::TargetToInitiator(XferLength::Pages(0x5678)))
         ));
     }
 
@@ -350,3 +350,4 @@ mod tests {
         ));
     }
 }
+
