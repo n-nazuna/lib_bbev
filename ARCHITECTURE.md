@@ -10,11 +10,11 @@
 | --- | --- | --- |
 | [`ata::command_code`](src/ata/command_code.rs) | `ata::CommandCode` | ATA コマンドの opcode 定義 |
 | [`blk_cmd`](src/blk_cmd.rs) | `XferParameter`, `XferDirection`, `XferLength` | OS・バックエンドに依存しない共通の転送型 |
-| [`ata`](src/ata.rs) | `Command`, `CommandBuilder`, `AtaProtocol`, `Response`, `Register` | ATA コマンド・応答の表現、20バイトの H2D FIS 生成 |
+| [`ata`](src/ata.rs) | `Command`, `CommandBuilder`, `AtaProtocol`, `Response`, `Register` | ATA フィールド・protocol・応答の表現、20バイトの H2D FIS 生成 |
 | [`ata::gpl`](src/ata/gpl.rs) | `Gpl`, `GplBuilder` | GPL のログアドレス・ページ指定から DMA / FPDMA の読み書きコマンドを生成 |
-| [`scsi`](src/scsi.rs) | `Cdb`, `Command`, `Status`, `Response`, `SenseData` | SCSI コマンド・応答の表現、sense バイト列の解析 |
+| [`scsi`](src/scsi.rs) | `Cdb`, `Command`, `Status`, `Response`, `SenseData` | CDB・転送情報・応答の表現、sense バイト列の解析 |
 | [`scsi::sat`](src/scsi/sat.rs) | `AtaPt` | ATA PASS-THROUGH (12)/(16)/(32) の生成、SCSI 応答から ATA 応答への変換 |
-| [`sg_io`](src/sg_io.rs) | `Device`, `SgIoError` | サイズ計算・検証、バッファ確保、Linux SG_IO ioctl、完了判定・エラー表示 |
+| [`sg_io`](src/sg_io.rs) | `Device`, `SgIoError` | SCSI コマンド情報を使った Linux SG_IO ioctl、サイズ計算・検証、バッファ確保 |
 
 ## コード上の依存関係
 
@@ -41,19 +41,52 @@ flowchart LR
 `ata` と `scsi` の基本型は `sg_io` に依存しない。
 `scsi` の基本型は ATA を参照せず、子モジュールの `scsi::sat` が両者の変換を担当する。
 
-外部依存は `libc`。`sg_io` で使用している。
+ライブラリの外部依存は `libc`。`sg_io` で使用している。
+GPL example の引数処理には開発用依存の `clap` を使う。
 `ata::CommandBuilder` は自前実装で、`nondata()`・`pio_data_in(len)` などの
 protocol 選択メソッドが完成した `ata::Command` を返す。公開の `build()` はなく、LBA48 の検証は行わない。
 `GplBuilder` も `read_log_dma_ext()` などのコマンド選択メソッドで `ata::Command` を返す。
 
+## I/O の境界
+
+ATA / SCSI はコマンド情報と形式変換を提供し、I/O engine が必要な情報を取り出して送信する。
+送信 API・バッファ管理・エラー型は各 I/O engine が決める。
+
+| コマンド | I/O engine が取り出す情報 |
+| --- | --- |
+| `scsi::Command` | `command.cdb.as_bytes()` の CDB バイト列、`command.xfer` の方向・長さ |
+| `ata::Command` | 公開フィールドのレジスタ値、`command.protocol` の protocol・方向・長さ、`command.fis()` の H2D FIS |
+
+```mermaid
+flowchart LR
+    gpl["GPL / ATA builder"] --> ata["ata::Command"]
+    ata -->|公開フィールド / protocol / fis| direct["独自 ATA I/O engine"]
+    direct --> native_response["ata::Response"]
+    ata --> sat["scsi::sat::AtaPt"]
+    sat --> scsi["scsi::Command"]
+    scsi -->|cdb.as_bytes / xfer| sg["sg_io::Device"]
+    scsi -->|cdb.as_bytes / xfer| custom["独自 SCSI I/O engine"]
+    sg --> response["scsi::Response"]
+    custom --> response
+    response --> convert["AtaPt::response()"]
+    convert --> ata_response["Option&lt;ata::Response&gt;"]
+```
+
+ATA engine はレジスタ値を直接使うか、FIS を生成して使う。
+SCSI engine は CDB と転送情報を使う。
+SAT 経由の ATA 情報取得は呼び出し側が行う。GOOD 応答では ATA の完了レジスタが返らないため、
+変換結果は `Option<ata::Response>` のまま扱う。
+バッファは呼び出し側が所有する。`Device::allocate()` は SG_IO の補助 API。
+
 ## コマンドとデータの流れ
 
-[`examples/gpl.rs`](examples/gpl.rs) の GPL ログ読み書きを中心に示す。
+[`examples/gpl.rs`](examples/gpl.rs) の GPL ログ読み取りを中心に示す。
+`gpl <device> -a <address> -n <number> -c <count>` で読み取るログとページを指定し、xxd風に表示する。
 `allocate()` で確保したバッファは呼び出し側が保持し、`execute()` に借用させる。
 
 ```mermaid
 flowchart TD
-    gpl["Gpl::builder(): address / page_number / page_count"] --> builder["read_log_dma_ext() / write_log_dma_ext()"]
+    gpl["Gpl::builder(): address / page_number / page_count"] --> builder["read_log_dma_ext()"]
     builder --> ata["ata::Command: レジスタ値 + AtaProtocol"]
     direct["ata::Command::builder()"] --> ata
     ata --> pt["scsi::sat::AtaPt: ATA コマンドを保持"]
@@ -71,7 +104,7 @@ flowchart TD
     ioctl -->|読み取りデータを格納| buf
     buf -->|書き込みデータを供給| ioctl
     ioctl -->|status・sense・residual| check["完了判定"]
-    check --> result["呼び出し側へ Result&lt;(), SgIoError&gt;"]
+    check --> result["呼び出し側へ Result&lt;scsi::Response, SgIoError&gt;"]
     execute -->|検証失敗| result
     ioctl -->|ioctl 失敗| result
 ```
@@ -87,8 +120,14 @@ flowchart TD
 
 デバイスファイルは呼び出し側が開き、`Device` は渡された raw fd を保持する。
 fd の所有・クローズは管理しない。`execute()` は同期実行で、
-status・host_status・driver_status のいずれかが非ゼロ、または residual が非ゼロならエラー。
-戻り値は `Result<(), SgIoError>` で、`scsi::Response` を直接返す API ではない。
+戻り値は `Result<scsi::Response, SgIoError>`。
+CHECK CONDITION・BUSY なども `Ok(Response)` として返すので、呼び出し側が `response.status` を確認する。
+生の status 値から `Status` への変換は SG_IO 側で行い、未定義の値も `Status::Other(u8)` で保持する。
+
+host / driver の失敗は `TransportError` にする。ただし CHECK CONDITION の
+`DRIVER_SENSE` (`0x08`) は sense の通知として扱う。
+GOOD は全量転送を要求し、residual が非ゼロなら `UnexpectedResidual` にする。
+他の status では部分転送を許すが、負の residual や要求長を超える残量はエラーにする。
 
 ## 応答の流れ
 
@@ -97,21 +136,20 @@ status・host_status・driver_status のいずれかが非ゼロ、または res
 `SenseData::from_bytes()` は形式と追加長を読み、`FixedSense` または `DescriptorSense` に変換する。
 descriptor 本体のバイト列は保持し、ATA 固有の解釈は `scsi::sat` が行う。
 
-現在は `examples/gpl.rs` が SG_IO のエラーから SCSI 応答を組み立てている。
+SG_IO は `sb_len_wr` で示された有効な sense の範囲だけを解析して `scsi::Response` を返す。
+`examples/gpl.rs` はその応答を保持していた `AtaPt` に渡す。
 
 ```mermaid
 flowchart TD
-    execute["Device::execute()"] --> good["Ok(()): GOOD、ATA レジスタ情報なし"]
-    execute --> error["Err(SgIoError)"]
-    error -->|CHECK CONDITION、host_status=0| raw["ScsiError の sense: 32バイト"]
+    execute["Device::execute()"] --> raw["SG_IO の sense: sb_len_wr バイト"]
+    execute --> error["Err(SgIoError): ioctl / transport / 転送検証の失敗"]
     raw --> parse["SenseData::from_bytes()"]
-    parse --> response["scsi::Response: CheckCondition + sense_data"]
+    parse --> response["Ok(scsi::Response): Status + sense_data"]
     response --> sat["保持していた AtaPt::response()"]
     sat --> ata["Some(ata::Response): STATUS / ERROR + Option&lt;Register&gt;"]
     sat --> none["None: ATA 情報を取得できない"]
     ata --> display["example で STATUS / ERROR / COUNT / LBA / DEVICE を表示"]
-    error --> return["表示後も元のエラーを返す"]
-    display --> return
+    response --> policy["呼び出し側で SCSI STATUS を判定"]
 ```
 
 `AtaPt::response()` は現在のコマンドの CHECK CONDITION を対象にする。
@@ -125,8 +163,8 @@ Deferred や ATA 情報のない応答、不完全なデータ、完了値が抑
 
 - 転送型は `blk_cmd` に集約し、ATA・SCSI・SAT・SG_IO が同じ型を使う。`AtaProtocol` から SCSI コマンドに載せる `XferParameter` への変換は `scsi::sat::AtaPt` が担当する。
 - SCSI のコマンド・sense 定義は `scsi`、ATA と SCSI の相互変換は `scsi::sat` が担当する。
-- `Device` がデバイス設定、転送サイズ計算、確保、送信、完了判定をまとめて担当する。
+- I/O engine がコマンド情報を参照して送信する。SG_IO の `Device` はデバイス設定、転送サイズ計算、確保、ioctl、完了判定を担当する。
 - `ata::Command` のレジスタ値と `protocol` フィールドは `pub` で、外部ドライバから参照できる。
 - `Cdb::as_bytes()` は公開されており、外部ドライバから CDB のバイト列を参照できる。
-- `sg_io` はまだ生の sense をエラーに含める。`scsi::Response` の生成と SAT への受け渡しは example 側が担当している。
-- I/O を差し替える共通 trait はなく、実行 API とエラー型は `sg_io` 固有になっている。
+- `sg_io` が `scsi::Response` を生成し、SAT への受け渡しは example 側が担当する。送信失敗時の生の sense は `TransportError` に残す。
+- 独自 I/O engine は ATA / SCSI の型と変換 API を使って実装でき、`sg_io` への依存は不要。
