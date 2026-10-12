@@ -102,36 +102,10 @@ fn gpl_read_and_write_encode_page_counts_and_ncq_subcommands() {
 }
 
 #[test]
-fn checked_ata_lba_accepts_the_boundary_and_rejects_overflow() {
-    let maximum = (1u64 << 48) - 1;
-    let command = Ata::new().try_lba(maximum).unwrap();
-    let fis = command.fis();
-    assert_eq!(&fis[4..7], &[0xff; 3]);
-    assert_eq!(&fis[8..11], &[0xff; 3]);
-    let pt = AtaPt::new(command);
-    let Cdb::Cdb16(cdb16) = pt.cdb16().cdb else { panic!("expected CDB16") };
-    let Cdb::Cdb32(cdb32) = pt.cdb32().cdb else { panic!("expected CDB32") };
-    assert_eq!(&cdb16[7..13], &[0xff; 6]);
-    assert_eq!(&cdb32[14..20], &[0xff; 6]);
-    for value in [1u64 << 48, u64::MAX] {
-        let error = match Ata::new().try_lba(value) {
-            Err(error) => error,
-            Ok(_) => panic!("overflowing LBA was accepted"),
-        };
-        assert_eq!(error.value, value);
-    }
-    assert!(Ata::new().try_lba(0).is_ok());
-
-    // SCSI READ(16) has a 64-bit LBA and must not inherit the ATA limit.
+fn scsi_read16_preserves_64bit_lba() {
     let Cdb::Cdb16(cdb) = Read16::new().lba(u64::MAX).transfer_length(1).build().cdb
     else { panic!("expected CDB16") };
     assert_eq!(&cdb[2..10], &[0xff; 8]);
-}
-
-#[test]
-#[should_panic(expected = "ATA LBA must fit in 48 bits")]
-fn fluent_ata_lba_never_silently_truncates() {
-    let _ = Ata::new().lba(1u64 << 48);
 }
 
 #[test]

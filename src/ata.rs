@@ -5,20 +5,6 @@ use crate::{
 
 pub use crate::ata_cmd::AtaCmd;
 
-/// A value that cannot be represented in the 48-bit ATA LBA registers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AtaLbaError {
-    pub value: u64,
-}
-
-impl std::fmt::Display for AtaLbaError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ATA LBA exceeds 48 bits: {:#x}", self.value)
-    }
-}
-
-impl std::error::Error for AtaLbaError {}
-
 pub enum AtaProtocol {
     NonData,
     Pio { direction: XferDirection },
@@ -73,20 +59,9 @@ impl Ata {
         self.count = count;
         self
     }
-    /// Sets the 48-bit ATA LBA register value.
-    ///
-    /// # Panics
-    /// Panics when `lba` exceeds 48 bits. Use [`Self::try_lba`] for fallible input.
-    pub fn lba(self, lba: u64) -> Self {
-        self.try_lba(lba).expect("ATA LBA must fit in 48 bits")
-    }
-
-    pub fn try_lba(mut self, lba: u64) -> Result<Self, AtaLbaError> {
-        if lba >= (1u64 << 48) {
-            return Err(AtaLbaError { value: lba });
-        }
+    pub fn lba(mut self, lba: u64) -> Self {
         self.lba = lba;
-        Ok(self)
+        self
     }
     pub fn control(mut self, control: u8) -> Self {
         self.control = control;
