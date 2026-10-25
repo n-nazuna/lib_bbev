@@ -1,12 +1,15 @@
 use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
 use crate::scsi::{Command, Response, SenseData, Status};
 use std::fmt;
+use std::fs::{File, OpenOptions};
 use std::io;
+use std::os::fd::{AsRawFd, RawFd};
+use std::path::Path;
 
 pub struct Device {
-    fd: i32,
+    file: File,
     sector_size_bytes: u32,
-    max_sectors_kbytes: u32,
+    max_transfer_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -109,6 +112,8 @@ struct SgIoHdr {
 }
 
 const SG_IO: libc::c_ulong = 0x2285;
+const BLKSECTGET: libc::c_ulong = 0x1267;
+const BLKSSZGET: libc::c_ulong = 0x1268;
 const SG_DXFER_NONE: i32 = -1;
 const SG_DXFER_TO_DEV: i32 = -2;
 const SG_DXFER_FROM_DEV: i32 = -3;
@@ -156,12 +161,15 @@ fn check_completion(hdr: &SgIoHdr, sense: &[u8]) -> Result<Response, SgIoError> 
 }
 
 impl Device {
-    pub fn new(fd: i32, sector_size_bytes: u32, max_sectors_kbytes: u32) -> Self {
-        Self {
-            fd,
+    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
+        let file = OpenOptions::new().read(true).write(true).open(path)?;
+        let (sector_size_bytes, max_transfer_bytes) = read_device_limits(file.as_raw_fd())?;
+
+        Ok(Self {
+            file,
             sector_size_bytes,
-            max_sectors_kbytes,
-        }
+            max_transfer_bytes,
+        })
     }
 
     fn transfer_len_bytes(&self, xfer: XferParameter) -> Result<usize, SgIoError> {
@@ -194,11 +202,7 @@ impl Device {
             kind: SgIoErrorKind::InvalidTransferLength,
         })?;
 
-        let maximum = (self.max_sectors_kbytes as usize)
-            .checked_mul(1024)
-            .ok_or(SgIoError {
-                kind: SgIoErrorKind::InvalidTransferLength,
-            })?;
+        let maximum = self.max_transfer_bytes;
 
         if requested > maximum {
             return Err(SgIoError {
@@ -264,7 +268,7 @@ impl Device {
             info: 0,
         };
 
-        let ret = unsafe { libc::ioctl(self.fd, SG_IO, &mut hdr) };
+        let ret = unsafe { libc::ioctl(self.file.as_raw_fd(), SG_IO, &mut hdr) };
         if ret < 0 {
             return Err(SgIoError {
                 kind: SgIoErrorKind::IoctlFailed(io::Error::last_os_error()),
@@ -275,11 +279,43 @@ impl Device {
     }
 }
 
+fn read_device_limits(fd: RawFd) -> io::Result<(u32, usize)> {
+    let mut sector_size_bytes: libc::c_int = 0;
+    if unsafe { libc::ioctl(fd, BLKSSZGET, &mut sector_size_bytes) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let sector_size_bytes = u32::try_from(sector_size_bytes)
+        .ok()
+        .filter(|size| *size != 0)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid sector size"))?;
+
+    let mut max_sectors: libc::c_ulong = 0;
+    if unsafe { libc::ioctl(fd, BLKSECTGET, &mut max_sectors) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let max_transfer_bytes = usize::try_from(max_sectors)
+        .ok()
+        .and_then(|sectors| sectors.checked_mul(512))
+        .filter(|bytes| *bytes != 0)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid transfer limit"))?;
+
+    Ok((sector_size_bytes, max_transfer_bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Device, SgIoErrorKind, SgIoHdr, check_completion};
     use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
     use crate::scsi::{Cdb, Command, SenseData, Status};
+    use std::fs::File;
+
+    fn device_with_limits(sector_size_bytes: u32, max_transfer_bytes: usize) -> Device {
+        Device {
+            file: File::open("/dev/null").unwrap(),
+            sector_size_bytes,
+            max_transfer_bytes,
+        }
+    }
 
     fn read_command(sectors: u32) -> Command {
         Command {
@@ -292,7 +328,7 @@ mod tests {
 
     #[test]
     fn allocation_respects_transfer_length_and_device_limit() {
-        let device = Device::new(-1, 512, 1);
+        let device = device_with_limits(512, 1024);
 
         assert_eq!(device.allocate(&read_command(2)).unwrap().len(), 1024);
         assert!(matches!(
@@ -303,7 +339,7 @@ mod tests {
 
     #[test]
     fn no_data_command_uses_an_empty_buffer() {
-        let device = Device::new(-1, 512, 1);
+        let device = device_with_limits(512, 1024);
         let command = Command {
             cdb: Cdb::Cdb16([0; 16]),
             xfer: XferParameter::NoDataTransfer,
@@ -314,7 +350,7 @@ mod tests {
 
     #[test]
     fn zero_length_transfer_is_rejected() {
-        let device = Device::new(-1, 512, 1);
+        let device = device_with_limits(512, 1024);
 
         assert!(matches!(
             device.allocate(&read_command(0)),
@@ -324,7 +360,7 @@ mod tests {
 
     #[test]
     fn pages_and_bytes_lengths_are_converted_to_the_expected_byte_count() {
-        let device = Device::new(-1, 512, 10);
+        let device = device_with_limits(512, 10 * 1024);
 
         let pages = Command {
             cdb: Cdb::Cdb16([0; 16]),
@@ -341,6 +377,18 @@ mod tests {
             )),
         };
         assert_eq!(device.allocate(&bytes).unwrap().len(), 777);
+    }
+
+    #[test]
+    fn sector_lengths_use_the_device_logical_sector_size() {
+        let device = device_with_limits(4096, 128 * 1024);
+
+        assert_eq!(device.allocate(&read_command(2)).unwrap().len(), 8192);
+    }
+
+    #[test]
+    fn open_rejects_non_block_devices() {
+        assert!(Device::open("/dev/null").is_err());
     }
 
     fn completion_header(status: u8) -> SgIoHdr {

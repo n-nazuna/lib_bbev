@@ -1,4 +1,4 @@
-//! GPL.md §1〜3に基づくコマンド生成テスト。デバイスへの送信は行わない。
+//! GPL.typ §1〜3に基づくコマンド生成テスト。デバイスへの送信は行わない。
 
 use lib_bbev::ata::gpl::{Gpl, GplBuilder};
 use lib_bbev::ata::{AtaProtocol, Command};
@@ -13,7 +13,7 @@ fn commands(builder: impl Fn() -> GplBuilder) -> [Command; 4] {
     ]
 }
 
-// GPL.md §1〜2
+// GPL.typ §1〜2
 // 入力: Read、address=0x12、page_number=0x3456、page_count=0x789a、feature=0xbcde。
 // 期待値: COMMAND=0x47、FEATURE=0xbcde、COUNT=0x789a、LBA=0x003400005612。
 //         Protocol=DMA、方向=デバイス→ホスト、長さ=0x789aページ（各512バイト）。
@@ -42,7 +42,7 @@ fn read_log_dma_ext_registers_and_transfer() {
     );
 }
 
-// GPL.md §1〜2
+// GPL.typ §1〜2
 // 入力: Write、address=0xe0、page_number=0x1234、page_count=0x5678、feature=0xabcd。
 // 期待値: COMMAND=0x57、FEATURE=0（予約）、COUNT=0x5678、LBA=0x0012000034e0。
 //         Protocol=DMA、方向=ホスト→デバイス、長さ=0x5678ページ（各512バイト）。
@@ -71,7 +71,7 @@ fn write_log_dma_ext_registers_and_transfer() {
     );
 }
 
-// GPL.md §1・3
+// GPL.typ §1・3
 // 入力: NCQ Read、address=0x12、page_number=0x3456、page_count=0x789a、feature=0xbcde。
 // 期待値: COMMAND=0x65、FEATURE=0x789a、LBA=0x003400005612、AUXILIARY=0x0000bcde。
 //         COUNT: PRIO=0、SUBCOMMAND=1、NCQ TAG=0、Reserved=0。DEVICE=0x40。
@@ -105,7 +105,7 @@ fn receive_fpdma_queued_encapsulates_read_log_dma_ext() {
     );
 }
 
-// GPL.md §1・3
+// GPL.typ §1・3
 // 入力: NCQ Write、address=0xe0、page_number=0x1234、page_count=0x5678、feature=0xabcd。
 // 期待値: COMMAND=0x64、FEATURE=0x5678、LBA=0x0012000034e0、AUXILIARY=0（予約）。
 //         COUNT: PRIO=0、SUBCOMMAND=2、NCQ TAG=0、Reserved=0。DEVICE=0x40。
@@ -138,7 +138,7 @@ fn send_fpdma_queued_encapsulates_write_log_dma_ext() {
     );
 }
 
-// GPL.md §1
+// GPL.typ §1
 // 入力: 全4コマンド、address=0xff、page_number=0x0000 / 0x00ff / 0x0100 / 0xffff。
 // 期待値: LBAは下記expected_lba。ページ番号の上下バイトを分離し、予約領域は0。
 #[test]
@@ -182,7 +182,7 @@ fn page_number_byte_boundaries_and_reserved_lba_bits() {
     }
 }
 
-// GPL.md §2〜3
+// GPL.typ §2〜3
 // 入力: 全4コマンド、page_count=1 / 0x0100 / 0xffff。
 // 期待値: DMAはCOUNT、NCQはFEATUREが入力値。転送長も同じ512バイトページ数。
 //         NCQのCOUNTはページ数に依存せず、Read=0x0100 / Write=0x0200。
@@ -222,7 +222,7 @@ fn page_count_uses_full_16_bits() {
     }
 }
 
-// GPL.md §1〜2
+// GPL.typ §1〜2
 // 入力: Gpl::builder() / GplBuilder::new() / GplBuilder::default() → DMA Read。
 // 期待値: Directory（LOG ADDRESS=0）、PAGE NUMBER=0、COUNT=1、FEATURE=0、DMA In / Pages(1)。
 #[test]

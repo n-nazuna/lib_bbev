@@ -1,4 +1,4 @@
-//! SAT.md §7〜9 に基づく応答変換テスト。デバイスへの送信は行わない。
+//! SAT.typ §7〜9 に基づく応答変換テスト。デバイスへの送信は行わない。
 
 use lib_bbev::ata::Command as AtaCommand;
 use lib_bbev::scsi::sat::AtaPt;
@@ -38,7 +38,7 @@ fn fixed_response(flags: u8) -> Response {
     }
 }
 
-// SAT.md §8
+// SAT.typ §8
 // 入力: 別descriptorの後にATA descriptor、EXTEND=1、COUNT=[12 34]、
 //       LBA=[33 66 22 55 11 44]、ERROR=04、STATUS=51、DEVICE=40。
 // 期待値: count=0x1234、lba=0x112233445566、error=0x04、status=0x51、device=0x40。
@@ -59,7 +59,7 @@ fn descriptor_48bit_registers() {
     assert_eq!(register.device, 0x40, "DEVICE");
 }
 
-// SAT.md §8
+// SAT.typ §8
 // 入力: EXTEND=0、COUNT=34、LBA=[0b 66 00 55 00 44]、DEVICE=4a。
 // 期待値: count=0x34、lba=0x0b445566（上位4bitはdescriptor byte 6）、device=0x4a。
 #[test]
@@ -76,7 +76,7 @@ fn descriptor_28bit_registers() {
     assert_eq!(register.device, 0x4a, "DEVICE");
 }
 
-// SAT.md §6、9
+// SAT.typ §6、9
 // 入力: VALID=0、INFORMATION=[04 51 4b 34]、LBA下位=[66 55 44]。
 // 期待値: error=0x04、status=0x51、count=0x34、device=0x4b。
 //         EXTEND=0ならlba=0x0b445566、EXTEND=1かつ上位値が0ならlba=0x445566。
@@ -94,7 +94,7 @@ fn fixed_registers() {
     }
 }
 
-// SAT.md §9
+// SAT.typ §9
 // 入力: EXTEND=1、COUNT UPPER NONZERO / LBA UPPER NONZEROの一方または両方が1。
 // 期待値: error=0x04、status=0x51を保持、復元できないregisterはNone。
 #[test]

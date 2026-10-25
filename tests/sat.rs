@@ -1,4 +1,4 @@
-//! SAT.md §3〜6.1 に基づくCDB生成テスト。デバイスへの送信は行わない。
+//! SAT.typ §3〜6.1 に基づくCDB生成テスト。デバイスへの送信は行わない。
 
 use lib_bbev::ata::{Command as AtaCommand, CommandCode};
 use lib_bbev::blk_cmd::{XferDirection, XferLength, XferParameter};
@@ -33,7 +33,7 @@ fn protocol_and_flags(scsi: &ScsiCommand) -> (u8, u8) {
     (protocol >> 1, flags)
 }
 
-// SAT.md §3
+// SAT.typ §3
 // 入力: ReadSectors / PIO In / Sectors(0x34)、feature=0x12、count=0x34、
 //       lba=0x56789a、device=0x4b、control=0x80 → cdb12()
 // 期待値: [a1 08 1e 12 34 9a 78 56 4b 20 00 80]（全て16進数）。
@@ -61,7 +61,7 @@ fn cdb12_register_layout() {
     );
 }
 
-// SAT.md §4
+// SAT.typ §4
 // 入力: ReadSectorsExt / PIO In / Sectors(0x99aa)、feature=0x7788、count=0x99aa、
 //       lba=0x112233445566、device=0x40、control=0x80 → cdb16()
 // 期待値: [85 09 1e 77 88 99 aa 33 66 22 55 11 44 40 24 80]（全て16進数）。
@@ -90,7 +90,7 @@ fn cdb16_register_layout() {
     );
 }
 
-// SAT.md §5
+// SAT.typ §5
 // 入力: ReadDmaExt / DMA In / Sectors(0x99aa)、feature=0x7788、count=0x99aa、
 //       lba=0x112233445566、device=0x40、control=0x80、icc=0x77、aux=0x8899aabb → cdb32()
 // 期待値（全て16進数）:
@@ -153,7 +153,7 @@ fn assert_fields(scsi: &ScsiCommand, expected: &ExpectedFields) {
     assert_eq!((flags >> 5) & 1, 0, "CK_COND: {:?}", scsi.cdb);
 }
 
-// SAT.md §3.1〜3.2
+// SAT.typ §3.1〜3.2
 // 入力: count=feature=2、長さ=Sectors(2)、CDB12/16/32。
 // 各ケースのinput → expected_fields（CDBの各フィールド）とexpected_transfer（転送情報）。
 // 共通の期待値: BYTE_BLOCK=1、T_TYPE=1。T_DIRはIn=1 / Out=0。
@@ -253,7 +253,7 @@ fn data_protocols_and_directions() {
     }
 }
 
-// SAT.md §3.2
+// SAT.typ §3.2
 // 入力: ReadSectors / PIO In または WriteSectors / PIO Out、count=2、CDB12/16/32。
 // 長さ → 期待値 (BYTE_BLOCK, T_TYPE):
 //   Bytes(2)   → (0, 0)
@@ -333,7 +333,7 @@ fn transfer_units_in_both_directions() {
     }
 }
 
-// SAT.md §3.2、§6.1
+// SAT.typ §3.2、§6.1
 // 入力: NCQ、feature=0x1234、count=0x00a8（タグ）、CDB16/32。
 // READ/WRITE FPDMAのSectors(0x1234) → T_TYPE=1。
 // RECEIVE/SEND FPDMAのPages(0x1234) → T_TYPE=0。
@@ -426,7 +426,7 @@ fn fpdma_transfer_length_comes_from_features() {
     }
 }
 
-// SAT.md §3.2
+// SAT.typ §3.2
 // 入力 → 期待値 (PROTOCOL, T_LENGTH, 転送情報)、CDB12/16/32:
 //   FlushCache / NonData、count=0xff       → (0x03, 00, NoDataTransfer)
 //   NcqNonData / NcqNonData、feature=0xff  → (0x0c, 00, NoDataTransfer)
