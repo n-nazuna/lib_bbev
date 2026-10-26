@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let device_path = env::args()
         .nth(1)
         .ok_or("usage: cargo run --example err -- <device_path>")?;
-    let device = Device::open(device_path)?;
+    let device = Device::open(device_path, 512, 128 * 1024)?;
 
     let ata = Command::builder()
         .command(CommandCode::Nop)

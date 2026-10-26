@@ -3,12 +3,8 @@ use crate::scsi::{Command, Response, SenseData, Status};
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::num::NonZeroU32;
-use std::ops::{Deref, DerefMut};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::path::Path;
 
 pub struct Device {
     file: File,
@@ -123,50 +119,6 @@ const DEFAULT_TIMEOUT_MILLIS: u32 = 1_200_000_000;
 // SG reports DRIVER_SENSE for CHECK CONDITION even when transport succeeded.
 const DRIVER_SENSE: u16 = 0x08;
 
-fn page_size() -> usize {
-    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
-}
-
-/// Zeroed, page-aligned SG_IO buffer, so each page costs the block layer at most one segment.
-pub struct TransferBuffer {
-    storage: Vec<u8>,
-    offset: usize,
-    len: usize,
-}
-
-impl TransferBuffer {
-    fn new(len: usize) -> Result<Self, SgIoError> {
-        let page_size = page_size();
-        let storage = vec![
-            0;
-            len.checked_add(page_size).ok_or(SgIoError {
-                kind: SgIoErrorKind::InvalidTransferLength,
-            })?
-        ];
-        let offset = storage.as_ptr().align_offset(page_size);
-
-        Ok(Self {
-            storage,
-            offset,
-            len,
-        })
-    }
-}
-
-impl Deref for TransferBuffer {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        &self.storage[self.offset..self.offset + self.len]
-    }
-}
-
-impl DerefMut for TransferBuffer {
-    fn deref_mut(&mut self) -> &mut [u8] {
-        &mut self.storage[self.offset..self.offset + self.len]
-    }
-}
-
 fn check_completion(hdr: &SgIoHdr, sense: &[u8]) -> Result<Response, SgIoError> {
     let sense_len = usize::from(hdr.sb_len_wr).min(sense.len());
     let sense = &sense[..sense_len];
@@ -207,9 +159,12 @@ fn check_completion(hdr: &SgIoHdr, sense: &[u8]) -> Result<Response, SgIoError> 
 }
 
 impl Device {
-    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
+    pub fn open(
+        path: impl AsRef<Path>,
+        sector_size_bytes: u32,
+        max_transfer_bytes: usize,
+    ) -> io::Result<Self> {
         let file = OpenOptions::new().read(true).write(true).open(path)?;
-        let (sector_size_bytes, max_transfer_bytes) = read_device_limits(&file)?;
 
         Ok(Self {
             file,
@@ -259,8 +214,8 @@ impl Device {
         Ok(requested)
     }
 
-    pub fn allocate(&self, cmd: &Command) -> Result<TransferBuffer, SgIoError> {
-        TransferBuffer::new(self.transfer_len_bytes(cmd.xfer)?)
+    pub fn allocate(&self, cmd: &Command) -> Result<Vec<u8>, SgIoError> {
+        Ok(vec![0; self.transfer_len_bytes(cmd.xfer)?])
     }
 
     /// GOOD requires a complete transfer. On other SCSI statuses or an error,
@@ -326,51 +281,9 @@ impl Device {
     }
 }
 
-fn queue_dir(file: &File) -> io::Result<PathBuf> {
-    let rdev = file.metadata()?.rdev();
-    let device = PathBuf::from(format!(
-        "/sys/dev/block/{}:{}",
-        libc::major(rdev),
-        libc::minor(rdev)
-    ));
-    let queue = device.join("queue");
-    // A partition has no queue/; its parent disk does.
-    Ok(if queue.is_dir() {
-        queue
-    } else {
-        device.join("../queue")
-    })
-}
-
-fn read_queue_attr<T: FromStr>(queue: &Path, name: &str) -> io::Result<T> {
-    std::fs::read_to_string(queue.join(name))?
-        .trim()
-        .parse()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, format!("invalid queue/{name}")))
-}
-
-fn read_device_limits(file: &File) -> io::Result<(u32, usize)> {
-    let queue = queue_dir(file)?;
-    let sector_size: NonZeroU32 = read_queue_attr(&queue, "logical_block_size")?;
-    let max_sectors_kb: usize = read_queue_attr(&queue, "max_sectors_kb")?;
-    let max_segments: usize = read_queue_attr(&queue, "max_segments")?;
-
-    // Page-aligned buffers need at most one segment per page, so this size is never split.
-    let bytes = (max_sectors_kb * 1024).min(max_segments * page_size());
-    let bytes = bytes - bytes % sector_size.get() as usize;
-    if bytes == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "invalid transfer limit",
-        ));
-    }
-
-    Ok((sector_size.get(), bytes))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Device, SgIoErrorKind, SgIoHdr, TransferBuffer, check_completion, page_size};
+    use super::{Device, SgIoErrorKind, SgIoHdr, check_completion};
     use crate::blk_cmd::{XferDirection, XferLength, XferParameter};
     use crate::scsi::{Cdb, Command, SenseData, Status};
     use std::fs::File;
@@ -381,15 +294,6 @@ mod tests {
             sector_size_bytes,
             max_transfer_bytes,
         }
-    }
-
-    #[test]
-    fn transfer_buffer_is_page_aligned_and_zeroed() {
-        let buffer = TransferBuffer::new(1_000_007).unwrap();
-
-        assert_eq!(buffer.as_ptr() as usize % page_size(), 0);
-        assert_eq!(buffer.len(), 1_000_007);
-        assert!(buffer.iter().all(|byte| *byte == 0));
     }
 
     fn read_command(sectors: u32) -> Command {
@@ -459,11 +363,6 @@ mod tests {
         let device = device_with_limits(4096, 128 * 1024);
 
         assert_eq!(device.allocate(&read_command(2)).unwrap().len(), 8192);
-    }
-
-    #[test]
-    fn open_rejects_non_block_devices() {
-        assert!(Device::open("/dev/null").is_err());
     }
 
     fn completion_header(status: u8) -> SgIoHdr {
